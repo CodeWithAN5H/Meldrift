@@ -1,0 +1,16 @@
+{
+  "name": "meldrift-server",
+  "private": true,
+  "version": "0.2.0-alpha.1",
+  "type": "module",
+  "description": "Self-hostable Meldrift signaling and messaging service.",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "build": "bun build --compile --minify --sourcemap=external src/index.ts --outfile dist/meldrift-server"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0"
+  }
+}

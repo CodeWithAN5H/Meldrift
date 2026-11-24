@@ -1,0 +1,128 @@
+/* Rooms management */
+
+.md-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 11px 14px;
+  border-radius: var(--r-lg);
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.16);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.md-note strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.md-roomtable {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.md-roomtable > li {
+  padding: 12px 14px 10px;
+  border-radius: var(--r-xl);
+  background: var(--surface-panel);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.md-roomtable > li:hover {
+  background: rgba(22, 19, 31, 0.9);
+  border-color: var(--line-strong);
+}
+
+.md-roomtable__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.md-roomtable__tile {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--r-lg);
+  flex: none;
+  color: #fff;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--tile-a) 82%, #ffffff 8%),
+    color-mix(in srgb, var(--tile-a) 42%, #0b0911)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.md-roomtable__info {
+  min-width: 0;
+  flex: 1;
+}
+
+.md-roomtable__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.md-roomtable__meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+.md-roomtable__code {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+  flex: none;
+}
+
+.md-roomtable__code button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.md-roomtable__code button:hover {
+  color: var(--accent-bright);
+}
+
+.md-roomtable__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.md-roomtable__stamp {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 1080px) {
+  .md-roomtable__code {
+    display: none;
+  }
+}

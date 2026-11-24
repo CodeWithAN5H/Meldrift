@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Meldrift",
+  "version": "0.2.0-alpha.1",
+  "identifier": "com.meldrift.desktop",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Meldrift",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 940,
+        "minHeight": 620,
+        "center": true,
+        "resizable": true,
+        "decorations": false,
+        "transparent": false,
+        "backgroundColor": "#08070C",
+        "theme": "Dark",
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Game",
+    "shortDescription": "Free gaming rooms with voice, streaming and shared control.",
+    "longDescription": "Meldrift is a free desktop app where friends gather in rooms, talk over voice, watch the host's game live and pass control between players.",
+    "copyright": "Meldrift",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "compression": "lzma"
+      }
+    }
+  }
+}

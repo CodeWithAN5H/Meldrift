@@ -1,0 +1,72 @@
+.md-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.md-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.md-menu__trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.md-menu__pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 186px;
+  padding: 5px;
+  border-radius: var(--r-lg);
+  background: rgba(24, 21, 34, 0.98);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  z-index: var(--z-sticky);
+  animation: md-fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+.md-menu__pop--start {
+  right: auto;
+  left: 0;
+}
+
+.md-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background var(--dur-press) var(--ease-out),
+    color var(--dur-press) var(--ease-out);
+}
+
+.md-menu__item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.md-menu__item[data-danger="true"] {
+  color: #ff9aa2;
+}
+
+.md-menu__item[data-danger="true"]:hover:not(:disabled) {
+  background: rgba(242, 85, 95, 0.12);
+}
+
+.md-menu__item:disabled {
+  opacity: 0.4;
+}

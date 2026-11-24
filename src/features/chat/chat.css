@@ -1,0 +1,235 @@
+/* Chat: message list, day separators, composer, emoji popover */
+
+.md-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.md-chat__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 16px 8px;
+  contain: content;
+}
+
+.md-chat__loading {
+  display: grid;
+  place-items: center;
+  padding: 30px 0;
+}
+
+/* The chat panel can be short; keep the empty state inside it. */
+.md-chat .md-empty {
+  padding: 18px 16px;
+}
+
+.md-chat .md-empty__icon {
+  display: none;
+}
+
+.md-chat__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.md-chat__day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 8px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.md-chat__day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.md-msg {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  border-radius: var(--r-sm);
+  /* CSS-level virtualization keeps long histories cheap to scroll. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+
+.md-msg[data-grouped="true"] {
+  padding-top: 1px;
+}
+
+.md-msg__avatar {
+  width: 32px;
+  flex: none;
+}
+
+.md-msg__content {
+  min-width: 0;
+  flex: 1;
+  padding-bottom: 2px;
+}
+
+.md-msg__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.md-msg__author {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.md-msg__time {
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+.md-msg__body {
+  font-size: var(--fs-base);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* ---- Composer ---------------------------------------------------------- */
+
+.md-composer {
+  flex: none;
+  padding: 8px 14px 12px;
+  background: linear-gradient(180deg, rgba(13, 11, 20, 0), rgba(13, 11, 20, 0.5));
+}
+
+.md-composer__field {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 7px 8px 7px 13px;
+  border-radius: var(--r-xl);
+  background: var(--surface-input);
+  border: 1px solid var(--line);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.md-composer__field:focus-within {
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.08);
+}
+
+.md-composer__input {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  padding: 5px 0;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  color: var(--text-primary);
+  field-sizing: content;
+}
+
+.md-composer__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.md-composer__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.md-composer__emoji-wrap {
+  position: relative;
+}
+
+.md-composer__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.md-composer__icon:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+}
+
+.md-composer__send {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  color: #fff;
+  background: linear-gradient(180deg, #9b6dff, #7c4df2);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  transition: opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
+}
+
+.md-composer__send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.md-composer__send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.md-composer__send:disabled {
+  opacity: 0.4;
+}
+
+/* ---- Emoji popover ----------------------------------------------------- */
+
+.md-emoji {
+  position: absolute;
+  right: -6px;
+  bottom: 40px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: 268px;
+  padding: 8px;
+  border-radius: var(--r-xl);
+  background: rgba(24, 21, 34, 0.98);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-pop);
+  z-index: var(--z-sticky);
+  animation: md-fade-in var(--dur-fast) var(--ease-out) both;
+}
+
+.md-emoji__item {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  border-radius: var(--r-sm);
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--dur-press) var(--ease-out);
+}
+
+.md-emoji__item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

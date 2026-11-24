@@ -1,0 +1,131 @@
+/* ==========================================================================
+   Meldrift design tokens
+   Permanent visual language: graphite ground, charcoal surfaces, restrained
+   electric purple. All spacing/typography/motion decisions live here so the
+   whole product stays consistent as screens are added.
+   ========================================================================== */
+
+:root {
+  /* Ground + surfaces ---------------------------------------------------- */
+  --bg-void: #07060b;
+  --bg-app: #0a0810;
+  --surface-panel: #100e18;
+  --surface-panel-2: #0d0b14;
+  --surface-raised: #16131f;
+  --surface-raised-hover: #1c1828;
+  --surface-sunken: #0b0911;
+  --surface-input: #14111d;
+
+  /* Lines ---------------------------------------------------------------- */
+  --line: rgba(255, 255, 255, 0.055);
+  --line-strong: rgba(255, 255, 255, 0.1);
+  --line-accent: rgba(139, 92, 246, 0.4);
+
+  /* Type ----------------------------------------------------------------- */
+  --text-primary: #f3f0fa;
+  --text-secondary: #a29bb8;
+  --text-tertiary: #6e677f;
+  --text-on-accent: #ffffff;
+
+  /* Accent --------------------------------------------------------------- */
+  --accent: #8b5cf6;
+  --accent-bright: #a78bfa;
+  --accent-deep: #6d28d9;
+  --accent-wash: rgba(139, 92, 246, 0.12);
+  --accent-wash-strong: rgba(139, 92, 246, 0.2);
+  --accent-glow: rgba(139, 92, 246, 0.35);
+
+  /* Status --------------------------------------------------------------- */
+  --green: #3ddc97;
+  --green-wash: rgba(61, 220, 151, 0.13);
+  --red: #f2555f;
+  --red-wash: rgba(242, 85, 95, 0.14);
+  --amber: #f5b24b;
+  --amber-wash: rgba(245, 178, 75, 0.14);
+
+  /* Radii ---------------------------------------------------------------- */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+  --r-2xl: 18px;
+  --r-3xl: 22px;
+  --r-pill: 999px;
+
+  /* Spacing scale -------------------------------------------------------- */
+  --s-1: 4px;
+  --s-2: 6px;
+  --s-3: 8px;
+  --s-4: 10px;
+  --s-5: 12px;
+  --s-6: 14px;
+  --s-7: 16px;
+  --s-8: 20px;
+  --s-9: 24px;
+  --s-10: 32px;
+
+  /* Shadows -------------------------------------------------------------- */
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 18px 40px -28px rgba(0, 0, 0, 0.9);
+  --shadow-raised: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 10px 24px -18px rgba(0, 0, 0, 0.85);
+  --shadow-dock: 0 24px 48px -24px rgba(0, 0, 0, 0.95),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  --shadow-pop: 0 28px 70px -24px rgba(0, 0, 0, 0.92),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+
+  /* Layout metrics ------------------------------------------------------- */
+  --rail-w: 132px;
+  --sidebar-w: 304px;
+  --context-w: 276px;
+  --titlebar-h: 68px;
+  --dock-h: 64px;
+  --gutter: 12px;
+
+  /* Motion --------------------------------------------------------------- */
+  --dur-press: 110ms;
+  --dur-fast: 140ms;
+  --dur-base: 180ms;
+  --dur-slow: 220ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Typography ----------------------------------------------------------- */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui,
+    -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui,
+    sans-serif;
+  --fs-micro: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 21px;
+  --fs-2xl: 26px;
+
+  /* Layering ------------------------------------------------------------- */
+  --z-dock: 40;
+  --z-sticky: 50;
+  --z-overlay: 80;
+  --z-modal: 90;
+  --z-toast: 100;
+}
+
+/* Users who ask Windows for less motion get a calmer product. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+}
+
+:root[data-motion="reduced"] {
+  --dur-press: 0ms;
+  --dur-fast: 0ms;
+  --dur-base: 0ms;
+  --dur-slow: 0ms;
+}

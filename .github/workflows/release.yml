@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Publish as a draft release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Meldrift-Setup.exe
+    runs-on: windows-latest
+    env:
+      SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify version matches the tag
+        run: node scripts/check-version.mjs
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Frontend tests
+        run: bun run test
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      # A release is never produced from a failing build: every step above is
+      # blocking, and the bundler itself fails on a compile error.
+      - name: Build installer
+        run: bun run tauri build
+
+      - name: Package Meldrift-Setup.exe
+        run: node scripts/package.mjs
+
+      - name: Sign installer (only when a certificate secret exists)
+        if: ${{ env.SIGN_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "meldrift.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          $env:SIGN_PFX_PATH = $path
+          ./scripts/sign.ps1
+
+      - name: Validate release assets
+        shell: pwsh
+        run: |
+          $exe = "artifacts/Meldrift-Setup.exe"
+          if (-not (Test-Path $exe)) { throw "Meldrift-Setup.exe missing" }
+          $size = (Get-Item $exe).Length
+          if ($size -lt 1MB) { throw "Installer looks truncated ($size bytes)" }
+          $bytes = [IO.File]::ReadAllBytes($exe)[0..1]
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Installer is not a PE executable" }
+          Get-Content artifacts/build-report.json
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: meldrift-windows-installer
+          path: |
+            artifacts/Meldrift-Setup.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/build-report.json
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+          generate_release_notes: true
+          body: |
+            Meldrift `${{ github.ref_name }}` for Windows 10/11 (64-bit).
+
+            **Install:** run `Meldrift-Setup.exe`. It installs per user, creates a
+            Start Menu shortcut, offers a desktop shortcut, and registers an
+            uninstaller in Apps & features.
+
+            **Integrity:** see `SHA256SUMS.txt`.
+
+            **Signing:** this build is Authenticode-signed only when the release
+            job had a signing certificate configured; the signature state is
+            recorded in `build-report.json`.
+          files: |
+            artifacts/Meldrift-Setup.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/build-report.json

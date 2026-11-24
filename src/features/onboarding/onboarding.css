@@ -1,0 +1,97 @@
+.md-onboard {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    radial-gradient(680px 420px at 50% 118%, rgba(109, 40, 217, 0.28), transparent 70%),
+    radial-gradient(420px 320px at 8% 6%, rgba(139, 92, 246, 0.1), transparent 70%),
+    var(--bg-app);
+  overflow: hidden;
+}
+
+.md-onboard__glow {
+  position: absolute;
+  inset: auto 50% -160px auto;
+  transform: translateX(50%);
+  width: 720px;
+  height: 340px;
+  background: radial-gradient(closest-side, rgba(139, 92, 246, 0.28), transparent 72%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+
+.md-onboard__card {
+  position: relative;
+  width: min(560px, 100%);
+  border-radius: var(--r-3xl);
+  background: linear-gradient(180deg, rgba(23, 20, 33, 0.96), rgba(15, 13, 22, 0.98));
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.95), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  overflow: hidden;
+  animation: md-modal-in var(--dur-slow) var(--ease-out) both;
+}
+
+.md-onboard__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 26px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md-onboard__word {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.md-onboard__tag {
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+.md-onboard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 26px 6px;
+}
+
+.md-onboard__title {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.md-onboard__text {
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 440px;
+}
+
+.md-onboard__swatches {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.md-onboard__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 26px 22px;
+}
+
+.md-onboard__local {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
