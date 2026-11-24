@@ -119,7 +119,8 @@ export type ClientEvent =
   | { t: 'stream.unwatch'; roomId: string }
   | { t: 'stream.preset'; roomId: string; preset: StreamPreset }
   | { t: 'stream.sync'; roomId: string }
-  | StreamSignalEvent;
+  | StreamSignalEvent
+  | ControlClientEvent;
 
 export type ServerEvent =
   | { t: 'ready'; user: PublicUser; presence: Record<string, Presence> }
@@ -152,7 +153,8 @@ export type ServerEvent =
   | { t: 'stream.viewer.joined'; roomId: string; viewer: StreamParticipantView }
   | { t: 'stream.viewer.left'; roomId: string; userId: string }
   | { t: 'stream.error'; roomId?: string; error: string }
-  | StreamServerSignalEvent;
+  | StreamServerSignalEvent
+  | ControlServerEvent;
 
 export interface ApiError {
   error: string;
@@ -255,6 +257,99 @@ export type StreamServerSignalEvent =
   | { t: 'stream.offer'; roomId: string; from: string; sdp: string }
   | { t: 'stream.answer'; roomId: string; from: string; sdp: string }
   | { t: 'stream.ice'; roomId: string; from: string; candidate: VoiceIceCandidate };
+
+/* ---- Remote control (M5) ----------------------------------------------- */
+
+/**
+ * One person can control the host's game at a time. Everyone else may queue;
+ * the host approves each grant explicitly, so the queue is a request list,
+ * not an automatic baton pass.
+ */
+export const CONTROL_MAX_QUEUE = 8;
+export const CONTROL_MAX_TARGET_LABEL = 120;
+export const CONTROL_MAX_SDP_LENGTH = 60_000;
+export const CONTROL_MAX_CANDIDATE_LENGTH = 2_000;
+/** Control SDP/ICE is relayed on the authenticated socket, bounded per socket. */
+export const CONTROL_SIGNAL_BURST = 160;
+export const CONTROL_SIGNAL_WINDOW_MS = 10_000;
+/** A grant is only usable for this long; the host re-grants after that. */
+export const CONTROL_GRANT_TTL_MS = 12 * 60 * 60 * 1000;
+
+export interface ControlParticipantView {
+  userId: string;
+  displayName: string;
+  avatarColor: string;
+}
+
+/**
+ * Public control state for a room. It is broadcast to every member, but the
+ * grant id and input token are only ever sent to the host and the controller.
+ */
+export interface ControlSessionView {
+  roomId: string;
+  host: ControlParticipantView;
+  enabled: boolean;
+  /** The window the host armed; shown to everyone so consent is explicit. */
+  targetLabel: string | null;
+  queue: ControlParticipantView[];
+  controller: ControlParticipantView | null;
+  /** True once the controller's input channel is open and input is flowing. */
+  controllerActive: boolean;
+  /** When the current grant was made, or when control was enabled. */
+  since: number;
+}
+
+/** Sent only to the host and the controller. Never included in room state. */
+export interface ControlGrantView {
+  roomId: string;
+  grantId: string;
+  token: string;
+  hostUserId: string;
+  controller: ControlParticipantView;
+  targetLabel: string;
+  expiresAt: number;
+}
+
+export type ControlSignalEvent =
+  | { t: 'control.offer'; roomId: string; to: string; grantId: string; sdp: string }
+  | { t: 'control.answer'; roomId: string; to: string; grantId: string; sdp: string }
+  | {
+      t: 'control.ice';
+      roomId: string;
+      to: string;
+      grantId: string;
+      candidate: VoiceIceCandidate;
+    };
+
+export type ControlServerSignalEvent =
+  | { t: 'control.offer'; roomId: string; from: string; grantId: string; sdp: string }
+  | { t: 'control.answer'; roomId: string; from: string; grantId: string; sdp: string }
+  | {
+      t: 'control.ice';
+      roomId: string;
+      from: string;
+      grantId: string;
+      candidate: VoiceIceCandidate;
+    };
+
+export type ControlClientEvent =
+  | { t: 'control.enable'; roomId: string; enabled: boolean; targetLabel?: string | null }
+  | { t: 'control.request'; roomId: string }
+  | { t: 'control.cancel'; roomId: string }
+  | { t: 'control.approve'; roomId: string; userId: string }
+  | { t: 'control.reject'; roomId: string; userId: string }
+  | { t: 'control.revoke'; roomId: string }
+  | { t: 'control.release'; roomId: string }
+  | { t: 'control.active'; roomId: string; grantId: string; active: boolean }
+  | { t: 'control.sync'; roomId: string }
+  | ControlSignalEvent;
+
+export type ControlServerEvent =
+  | { t: 'control.state'; session: ControlSessionView }
+  | { t: 'control.granted'; grant: ControlGrantView }
+  | { t: 'control.revoked'; roomId: string; controllerId: string; reason: string }
+  | { t: 'control.error'; roomId?: string; error: string }
+  | ControlServerSignalEvent;
 
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,24}$/;
 export const MIN_PASSWORD_LENGTH = 8;

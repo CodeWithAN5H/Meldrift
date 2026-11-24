@@ -1,7 +1,8 @@
 # Meldrift architecture
 
-Status: `0.4.0-alpha.1` (M0–M4 complete: foundation, permanent UI, the M2
-networking foundation, M3 real-time voice and M4 game streaming).
+Status: `0.5.0-alpha.1` (M0–M5 complete: foundation, permanent UI, the M2
+networking foundation, M3 real-time voice, M4 game streaming and M5 remote
+control with player handoff).
 
 ## Stack decisions
 
@@ -17,6 +18,7 @@ networking foundation, M3 real-time voice and M4 game streaming).
 | Voice | **WebRTC in WebView2 (Chromium)** | A maintained WebRTC stack with Opus, ICE, DTLS-SRTP, echo cancellation (AEC3), noise suppression and gain control already inside the WebView2 runtime. No extra native audio/WebRTC dependency, no second process, and the same code path on every Windows machine. See `docs/VOICE.md` for why not `webrtc-rs` + a native audio stack. |
 | Video capture | **WebView2 `getDisplayMedia` (Windows Graphics Capture)** | Chromium's supported Win32 capture path, no full-resolution frame copies over IPC and no second capture/WebRTC stack. The same picker provides window and display sources. See `docs/STREAMING.md`. |
 | Video transport | **WebRTC video-only peer connections, host → viewer mesh** | Reuses the WebView2 codec and ICE stack while keeping voice SDP independent. One connection per viewer, capped at four because the host uploads each encoded stream itself. |
+| Remote input | **WebRTC data channel + Win32 `SendInput`** | Input needs a reliable, ordered, low-latency path that does not touch the signaling server. A dedicated SCTP data channel beside the existing WebRTC peers reuses ICE/DTLS; Rust injects with the supported Win32 API. See `docs/REMOTE_CONTROL.md`. |
 | Tests | **Vitest** + Rust `#[cfg(test)]` | Fast unit/integration coverage on both sides of the IPC boundary. |
 
 Deviations from the preferred stack: none. The only additions are Zustand (state
@@ -73,6 +75,11 @@ src/
   lib/voice/transport.ts   Signaling seam installed by the network store
   lib/stream/model.ts      Capture bounds/presets, adaptive encoder, stats, errors
   lib/stream/session.ts    Host/viewer video peer connections
+  lib/control/keys.ts      DOM code → scan code + virtual key, blocked shortcuts
+  lib/control/input.ts     Frame validation, batching, held input, injection pump
+  lib/control/session.ts   Controller/host input peer connections + data channel
+  lib/control/desktop.ts   Typed Tauri bridge for arm/inject/release
+  state/controlRoom.ts     Control session, queue, grants, lifecycle
   state/streamRoom.ts      Capture, viewer sessions, stats loops, lifecycle
   state/workspace.ts       Domain state and actions (local or server-backed)
   state/network.ts         Session, connection status, presence, requests

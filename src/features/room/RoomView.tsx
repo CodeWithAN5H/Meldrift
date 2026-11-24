@@ -16,11 +16,13 @@ import { scopeKey, useRoom, useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
 import { useVoiceRoom } from '@/state/voiceRoom';
 import { useStreamRoom } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
 import { useUi } from '@/state/ui';
 import { Button, EmptyState, IconButton, Pill, Spinner } from '@/components/ui';
 import { Menu } from '@/components/Menu';
 import { ChatThread } from '@/features/chat/ChatThread';
 import { StreamStage } from '@/features/room/StreamStage';
+import { ControlQueueTab } from '@/features/room/ControlPanel';
 import { colorFor, vars } from '@/lib/model';
 import { modeLabel } from '@/lib/stream/model';
 import { STREAM_VIEWER_LIMIT } from '@/state/streamRoom';
@@ -53,6 +55,8 @@ export function RoomView({ roomId }: { roomId: string }) {
   const leaveVoice = useVoiceRoom((state) => state.leave);
   const enterStreamRoom = useStreamRoom((state) => state.enterRoom);
   const leaveStreamRoom = useStreamRoom((state) => state.leaveRoom);
+  const enterControlRoom = useControlRoom((state) => state.enterRoom);
+  const leaveControlRoom = useControlRoom((state) => state.leaveRoom);
   const streamSession = useStreamRoom((state) => state.session);
   const streamHosting = useStreamRoom((state) => state.hosting);
   const streamWatching = useStreamRoom((state) => state.watching);
@@ -60,6 +64,23 @@ export function RoomView({ roomId }: { roomId: string }) {
   const streamMode = useStreamRoom((state) => state.mode);
   const watchStream = useStreamRoom((state) => state.watch);
   const unwatchStream = useStreamRoom((state) => state.unwatch);
+  const controlSession = useControlRoom((state) => state.session);
+  const controlLocal = useControlRoom((state) => state.local);
+  const requestControl = useControlRoom((state) => state.request);
+  const cancelControl = useControlRoom((state) => state.cancel);
+  const releaseControl = useControlRoom((state) => state.release);
+  const startControlling = useControlRoom((state) => state.startControlling);
+  const queuedForControl = Boolean(
+    controlSession?.queue.some((player) => player.userId === profile?.id),
+  );
+  const controlAction =
+    controlLocal === 'active' || controlLocal === 'connecting'
+      ? 'release'
+      : controlLocal === 'granted'
+        ? 'start'
+        : controlLocal === 'requesting' || queuedForControl
+          ? 'cancel'
+          : 'request';
 
   useEffect(() => {
     setTab('chat');
@@ -67,8 +88,12 @@ export function RoomView({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     enterStreamRoom(roomId);
-    return () => leaveStreamRoom();
-  }, [roomId, enterStreamRoom, leaveStreamRoom]);
+    enterControlRoom(roomId);
+    return () => {
+      leaveStreamRoom();
+      leaveControlRoom();
+    };
+  }, [roomId, enterStreamRoom, leaveStreamRoom, enterControlRoom, leaveControlRoom]);
 
   if (!room) {
     return (
@@ -218,15 +243,48 @@ export function RoomView({ roomId }: { roomId: string }) {
           <div className="md-sessionbar__actions">
             <Button
               size="sm"
-              variant="primary"
+              variant={controlAction === 'release' ? 'danger' : 'primary'}
               icon={<Gamepad2 size={14} />}
-              disabled
-              title="Remote control arrives in M5"
+              disabled={!streamSession || !controlSession?.enabled || room.isOwned}
+              title={
+                room.isOwned
+                  ? 'You are the host — grant control from the remote control panel'
+                  : !streamSession
+                    ? 'The host has not started a stream'
+                    : !controlSession?.enabled
+                      ? 'The host has not enabled remote control'
+                      : controlAction === 'release'
+                        ? 'Release control and stay in the room'
+                        : controlAction === 'start'
+                          ? 'The host granted you control — start playing'
+                          : controlAction === 'cancel'
+                            ? 'Cancel your pending request'
+                            : 'Ask the host for a turn'
+              }
+              onClick={() => {
+                if (controlAction === 'release') releaseControl();
+                else if (controlAction === 'cancel') cancelControl();
+                else if (controlAction === 'start') {
+                  if (!streamWatching) watchStream();
+                  void startControlling();
+                } else requestControl();
+              }}
             >
-              Take control
+              {controlAction === 'release'
+                ? 'Release control'
+                : controlAction === 'start'
+                  ? 'Start controlling'
+                  : controlAction === 'cancel'
+                    ? 'Cancel request'
+                    : 'Take control'}
             </Button>
-            <Button size="sm" icon={<ListOrdered size={14} />} disabled title="The player queue arrives with remote control (M5)">
-              Queue
+            <Button
+              size="sm"
+              icon={<ListOrdered size={14} />}
+              onClick={() => setTab('queue')}
+              title="Open the player queue"
+            >
+              Queue{controlSession?.queue.length ? ` (${controlSession.queue.length})` : ''}
             </Button>
             <Button
               size="sm"
@@ -254,7 +312,8 @@ export function RoomView({ roomId }: { roomId: string }) {
             Chat<span className="md-tab__count">{messageCount || ''}</span>
           </button>
           <button type="button" className="md-tab" data-active={tab === 'queue'} onClick={() => setTab('queue')}>
-            Player queue<span className="md-tab__count">0</span>
+            Player queue
+            <span className="md-tab__count">{controlSession?.queue.length ?? 0}</span>
           </button>
           <button type="button" className="md-tab" data-active={tab === 'info'} onClick={() => setTab('info')}>
             Game info
@@ -276,46 +335,11 @@ export function RoomView({ roomId }: { roomId: string }) {
             />
           ) : null}
 
-          {tab === 'queue' ? <QueueTab /> : null}
+          {tab === 'queue' ? <ControlQueueTab /> : null}
 
           {tab === 'info' ? <RoomInfoTab roomId={room.id} /> : null}
         </div>
       </section>
-    </div>
-  );
-}
-
-function QueueTab() {
-  const settings = useWorkspace((state) => state.settings);
-  const updateSettings = useWorkspace((state) => state.updateSettings);
-
-  return (
-    <div className="md-roomtab">
-      <div className="md-queuehead">
-        <div>
-          <p className="md-eyebrow">Control mode</p>
-          <p className="md-queuehead__mode">
-            {settings.controlMode === 'single' ? 'Single active player' : 'Multiple controllers'}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          onClick={() =>
-            void updateSettings({
-              controlMode: settings.controlMode === 'single' ? 'multi' : 'single',
-            })
-          }
-        >
-          Use {settings.controlMode === 'single' ? 'multiple' : 'single'}
-        </Button>
-      </div>
-
-      <EmptyState
-        icon={<ListOrdered size={19} />}
-        title="The queue is empty"
-        text="Friends can request control once a live session is running. The host always decides who plays next, and can take control back instantly."
-        compact
-      />
     </div>
   );
 }

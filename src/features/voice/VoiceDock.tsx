@@ -17,6 +17,7 @@ import { useVoice } from '@/state/voice';
 import { useVoiceRoom } from '@/state/voiceRoom';
 import { useWorkspace } from '@/state/workspace';
 import { useStreamRoom } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
 import { IconButton } from '@/components/ui';
 import './voice.css';
 
@@ -58,6 +59,27 @@ export function VoiceDock() {
   const watchStream = useStreamRoom((state) => state.watch);
   const unwatchStream = useStreamRoom((state) => state.unwatch);
   const stopStream = useStreamRoom((state) => state.stopHosting);
+  const controlSession = useControlRoom((state) => state.session);
+  const controlLocal = useControlRoom((state) => state.local);
+  const requestControl = useControlRoom((state) => state.request);
+  const cancelControl = useControlRoom((state) => state.cancel);
+  const releaseControl = useControlRoom((state) => state.release);
+  const startControlling = useControlRoom((state) => state.startControlling);
+  const controlRoomId = useControlRoom((state) => state.roomId);
+  const controlAvailable = Boolean(
+    currentRoom &&
+      currentRoom.id === controlRoomId &&
+      controlSession?.enabled &&
+      currentRoom.isOwned === false,
+  );
+  const controlling = controlLocal === 'active' || controlLocal === 'connecting';
+  const controlLabel = controlling
+    ? 'Release control'
+    : controlLocal === 'granted'
+      ? 'Start controlling'
+      : controlLocal === 'requesting'
+        ? 'Cancel control request'
+        : 'Request remote control';
   const shareDisabled =
     !streamHosting && !streamWatching && !streamSession && !currentRoom?.isOwned;
 
@@ -151,7 +173,8 @@ export function VoiceDock() {
       : 'Not in voice';
   const statusText =
     baseStatus +
-    (streamHosting ? ' · Sharing' : streamWatching ? ' · Watching' : '');
+    (streamHosting ? ' · Sharing' : streamWatching ? ' · Watching' : '') +
+    (controlling ? ' · Controlling' : controlLocal === 'requesting' ? ' · Queued' : '');
   const dotState = inVoice
     ? voiceStatus === 'connected'
       ? 'live'
@@ -240,9 +263,25 @@ export function VoiceDock() {
           <button
             type="button"
             className="md-dock__round"
-            aria-label="Game session controls"
-            disabled
-            title="Remote control arrives in M5; streaming is started with Share screen"
+            aria-label={controlLabel}
+            aria-pressed={controlling}
+            data-active={controlling}
+            disabled={!controlAvailable}
+            title={
+              controlAvailable
+                ? controlLabel
+                : currentRoom?.isOwned
+                  ? 'You are the host — grant control from the room panel'
+                  : controlSession?.enabled
+                    ? 'Open the room to request control'
+                    : 'The host has not enabled remote control'
+            }
+            onClick={() => {
+              if (controlling) releaseControl();
+              else if (controlLocal === 'granted') void startControlling();
+              else if (controlLocal === 'requesting') cancelControl();
+              else requestControl();
+            }}
           >
             <Gamepad2 size={17} />
           </button>

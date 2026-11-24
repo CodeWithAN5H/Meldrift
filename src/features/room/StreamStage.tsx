@@ -4,6 +4,9 @@ import type { StreamMode, StreamPreset } from '@shared/protocol';
 import { Avatar, Button, Spinner } from '@/components/ui';
 import { useUi } from '@/state/ui';
 import { useStreamRoom, STREAM_VIEWER_LIMIT } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
+import { ControlIndicator, ControlSurface } from '@/features/room/ControlSurface';
+import { useNetwork } from '@/state/network';
 import { useWorkspace } from '@/state/workspace';
 import { copyText } from '@/lib/clipboard';
 import type { Room } from '@/lib/model';
@@ -109,6 +112,14 @@ export function StreamStage({ room, online }: { room: Room; online: boolean }) {
   const watch = useStreamRoom((state) => state.watch);
   const unwatch = useStreamRoom((state) => state.unwatch);
   const pushToast = useUi((state) => state.pushToast);
+  const controlSession = useControlRoom((state) => state.session);
+  const controlLocal = useControlRoom((state) => state.local);
+  const controlRevoke = useControlRoom((state) => state.revoke);
+  const controlDisable = useControlRoom((state) => state.disable);
+  const selfId = useNetwork((state) => state.user?.id);
+  const mineControl = Boolean(
+    controlSession?.controller && selfId && controlSession.controller.userId === selfId,
+  );
 
   const copyInvite = async () => {
     const ok = await copyText(room.inviteCode);
@@ -157,6 +168,13 @@ export function StreamStage({ room, online }: { room: Room; online: boolean }) {
             <span className="md-stream__pill">
               <Eye size={11} /> {watchers}/{STREAM_VIEWER_LIMIT} watching
             </span>
+            {controlSession?.controller ? (
+              <ControlIndicator
+                name={controlSession.controller.displayName}
+                mine={false}
+                paused={!controlSession.controllerActive}
+              />
+            ) : null}
           </div>
           {hostPhase === 'starting' ? (
             <div className="md-stream__scrim">
@@ -188,14 +206,25 @@ export function StreamStage({ room, online }: { room: Room; online: boolean }) {
               </option>
             ))}
           </select>
-          <Button size="sm" onClick={() => openSetup(session?.mode ?? 'window')}>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (controlSession?.controller) {
+                controlRevoke('The host changed the shared window.');
+              }
+              openSetup(session?.mode ?? 'window');
+            }}
+          >
             Change source
           </Button>
           <Button
             size="sm"
             variant="danger"
             icon={<Square size={12} />}
-            onClick={() => stopHosting()}
+            onClick={() => {
+              controlDisable();
+              stopHosting();
+            }}
           >
             Stop stream
           </Button>
@@ -210,13 +239,33 @@ export function StreamStage({ room, online }: { room: Room; online: boolean }) {
         {chrome}
         <div className="md-stream__frame">
           {remoteStream ? (
-            <VideoSurface stream={remoteStream} muted label={`${session.host.displayName}'s stream`} />
+            mineControl && controlLocal === 'active' ? (
+              <ControlSurface
+                stream={remoteStream}
+                label={`${session.host.displayName}'s game — remote control`}
+              />
+            ) : (
+              <VideoSurface
+                stream={remoteStream}
+                muted
+                label={`${session.host.displayName}'s stream`}
+              />
+            )
           ) : (
             <div className="md-stream__blank">
               <Loader2 size={18} className="md-spin" />
               <span>Connecting to {session.host.displayName}'s stream…</span>
             </div>
           )}
+          {controlSession?.controller ? (
+            <div className="md-stream__overlay md-stream__overlay--top">
+              <ControlIndicator
+                name={controlSession.controller.displayName}
+                mine={mineControl}
+                paused={!controlSession.controllerActive}
+              />
+            </div>
+          ) : null}
           {viewerPhase === 'connecting' ? (
             <div className="md-stream__scrim">
               <Spinner size={18} /> <span>Negotiating video…</span>

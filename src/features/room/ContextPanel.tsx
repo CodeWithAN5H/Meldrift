@@ -4,7 +4,6 @@ import {
   Eye,
   Gamepad2,
   Headphones,
-  ListOrdered,
   Mic,
   MicOff,
   ShieldCheck,
@@ -16,6 +15,8 @@ import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
 import { useVoiceRoom } from '@/state/voiceRoom';
 import { useStreamRoom, STREAM_VIEWER_LIMIT } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
+import { ControlPanel } from '@/features/room/ControlPanel';
 import { Avatar, Button, IconButton } from '@/components/ui';
 import { describeConnection } from '@/lib/voice/model';
 import { modeLabel, presetLabel } from '@/lib/stream/model';
@@ -58,6 +59,8 @@ export function ContextPanel({ roomId }: { roomId: string }) {
   const unwatchStream = useStreamRoom((state) => state.unwatch);
   const stopHosting = useStreamRoom((state) => state.stopHosting);
   const openStreamModal = useUi((state) => state.openModal);
+  const controlSession = useControlRoom((state) => state.session);
+  const controlLocal = useControlRoom((state) => state.local);
 
   if (!room || !profile) return null;
 
@@ -283,15 +286,17 @@ export function ContextPanel({ roomId }: { roomId: string }) {
 
       <section className="md-card md-context__card">
         <header className="md-context__head">
-          <h2 className="md-eyebrow">Player queue (0)</h2>
-          <button type="button" className="md-context__clear" disabled title="No control session is active">
-            Clear
-          </button>
+          <h2 className="md-eyebrow">
+            Remote control
+            {controlSession?.queue.length
+              ? ` · ${controlSession.queue.length} queued`
+              : ''}
+          </h2>
+          <span className="md-control__state" data-on={Boolean(controlSession?.enabled)}>
+            {controlSession?.enabled ? 'On' : 'Off'}
+          </span>
         </header>
-        <p className="md-context__empty">
-          <ListOrdered size={14} />
-          No one is waiting. The queue opens when a session starts.
-        </p>
+        <ControlPanel room={room} />
       </section>
 
       <section className="md-card md-context__card">
@@ -307,6 +312,16 @@ export function ContextPanel({ roomId }: { roomId: string }) {
           <div>
             <dt>Status</dt>
             <dd>{streamSession ? (streamHosting ? 'You are sharing' : 'Live') : 'Idle'}</dd>
+          </div>
+          <div>
+            <dt>Controller</dt>
+            <dd>
+              {controlSession?.controller
+                ? controlSession.controller.displayName
+                : controlLocal === 'requesting'
+                  ? 'Your request is queued'
+                  : 'Nobody'}
+            </dd>
           </div>
           <div>
             <dt>Host</dt>
@@ -343,7 +358,7 @@ export function ContextPanel({ roomId }: { roomId: string }) {
         </dl>
         <p className="md-context__foot">
           <ShieldCheck size={12} />
-          Video is peer-to-peer · capture only while the host shares
+          Video is peer-to-peer · input only after the host grants control
         </p>
       </section>
     </aside>

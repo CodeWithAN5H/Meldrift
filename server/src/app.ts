@@ -1,6 +1,13 @@
 import type { Database } from 'bun:sqlite';
 import type { Server, ServerWebSocket } from 'bun';
 import {
+  CONTROL_GRANT_TTL_MS,
+  CONTROL_MAX_CANDIDATE_LENGTH,
+  CONTROL_MAX_QUEUE,
+  CONTROL_MAX_SDP_LENGTH,
+  CONTROL_MAX_TARGET_LABEL,
+  CONTROL_SIGNAL_BURST,
+  CONTROL_SIGNAL_WINDOW_MS,
   MAX_MESSAGE_LENGTH,
   PROTOCOL_VERSION,
   STREAM_MAX_CANDIDATE_LENGTH,
@@ -17,6 +24,8 @@ import {
   normalizeUsername,
   type BootstrapView,
   type ClientEvent,
+  type ControlGrantView,
+  type ControlSessionView,
   type ConversationView,
   type CreateRoomBody,
   type FriendRequestView,
@@ -52,6 +61,8 @@ export interface SocketData {
   voiceRecent: number[];
   /** Timestamps of recent stream signals (SDP/ICE). */
   streamRecent: number[];
+  /** Timestamps of recent remote-control signals (SDP/ICE). */
+  controlRecent: number[];
 }
 
 export interface VoiceOptions {
@@ -80,7 +91,36 @@ interface StreamSession {
   viewers: Map<string, { socketId: number }>;
 }
 
+/**
+ * Remote-control authority for a room. Created only when the stream host
+ * explicitly enables control, and destroyed with the stream. The grant id and
+ * input token are secrets: they go to the host and controller only.
+ */
+interface ControlSession {
+  roomId: string;
+  hostUserId: string;
+  hostSocketId: number;
+  enabled: boolean;
+  targetLabel: string | null;
+  /** FIFO: the host still approves every grant, even the first in line. */
+  queue: string[];
+  controllerId: string | null;
+  grantId: string | null;
+  token: string | null;
+  grantExpiresAt: number | null;
+  controllerActive: boolean;
+  since: number;
+  /** Recently revoked grant ids, so a replayed grant cannot regain control. */
+  revoked: string[];
+}
+
 const STREAM_PRESETS: readonly StreamPreset[] = ['auto', 'smooth', 'balanced', 'quality'];
+
+/** 192 bits of CSPRNG output; the input channel checks this before injecting. */
+function randomToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
 
 const DEFAULT_STUN_URLS = ['stun:stun.l.google.com:19302'];
 
@@ -128,6 +168,8 @@ export class SignalingService {
   private voiceRooms = new Map<string, Map<string, VoiceMember>>();
   /** roomId → live video session. Never persisted; one host per room. */
   private streams = new Map<string, StreamSession>();
+  /** roomId → remote-control authority. Never persisted; dies with the stream. */
+  private controlSessions = new Map<string, ControlSession>();
   private nextSocketId = 1;
 
   constructor(
@@ -184,6 +226,7 @@ export class SignalingService {
           recent: [],
           voiceRecent: [],
           streamRecent: [],
+          controlRecent: [],
         },
       });
       return upgraded ? undefined : this.fail('WebSocket upgrade failed', 400, origin);
@@ -1007,6 +1050,8 @@ export class SignalingService {
     const session = this.streams.get(roomId);
     if (!session) return;
     this.streams.delete(roomId);
+    // Control never outlives the stream it was granted for.
+    this.endControl(roomId, 'The stream stopped, so remote control ended.');
     this.broadcastToRoom(roomId, { t: 'stream.stopped', roomId, reason });
   }
 
@@ -1284,6 +1329,441 @@ export class SignalingService {
     this.sendTo(to, { t: event.t, roomId, from: socket.data.userId, sdp });
   }
 
+  /* ---- Remote control -------------------------------------------------- */
+
+  private controlView(roomId: string): ControlSessionView {
+    const room = this.db.query('SELECT * FROM rooms WHERE id = ?').get(roomId) as RoomRow | null;
+    const session = this.controlSessions.get(roomId);
+    return {
+      roomId,
+      host: this.streamParticipant(room?.owner_id ?? ''),
+      enabled: session?.enabled ?? false,
+      targetLabel: session?.targetLabel ?? null,
+      queue: (session?.queue ?? []).map((userId) => this.streamParticipant(userId)),
+      controller: session?.controllerId ? this.streamParticipant(session.controllerId) : null,
+      controllerActive: session?.controllerActive ?? false,
+      since: session?.since ?? 0,
+    };
+  }
+
+  private broadcastControl(session: ControlSession): void {
+    this.broadcastToRoom(session.roomId, {
+      t: 'control.state',
+      session: this.controlView(session.roomId),
+    });
+  }
+
+  private controlError(socket: AuthedSocket, roomId: string | undefined, error: string): void {
+    this.send(socket, { t: 'control.error', roomId: roomId || undefined, error });
+  }
+
+  /** Only the socket hosting the live stream may change control settings. */
+  private controlHost(
+    socket: AuthedSocket,
+    roomId: string,
+  ): ControlSession | null {
+    if (!roomId || roomId.length > 64) {
+      this.controlError(socket, undefined, 'Unknown room');
+      return null;
+    }
+    const session = this.controlSessions.get(roomId);
+    if (!session) {
+      this.controlError(socket, roomId, 'Remote control is not enabled in this room');
+      return null;
+    }
+    if (
+      session.hostUserId !== socket.data.userId ||
+      session.hostSocketId !== socket.data.socketId
+    ) {
+      this.controlError(socket, roomId, 'Only the streaming host can manage remote control');
+      return null;
+    }
+    return session;
+  }
+
+  /** Removes a grant everywhere. The host stays the owner; control goes to nobody. */
+  private dropGrant(session: ControlSession, reason: string): void {
+    const previous = session.controllerId;
+    if (previous) {
+      this.broadcastToRoom(session.roomId, {
+        t: 'control.revoked',
+        roomId: session.roomId,
+        controllerId: previous,
+        reason,
+      });
+    }
+    if (session.grantId) {
+      session.revoked.push(session.grantId);
+      if (session.revoked.length > 32) session.revoked.shift();
+    }
+    session.controllerId = null;
+    session.grantId = null;
+    session.token = null;
+    session.grantExpiresAt = null;
+    session.controllerActive = false;
+    this.broadcastControl(session);
+  }
+
+  /** Ends control completely, including the enabled flag and queue. */
+  private endControl(roomId: string, reason: string): void {
+    const session = this.controlSessions.get(roomId);
+    if (!session) return;
+    this.controlSessions.delete(roomId);
+    if (session.controllerId) {
+      this.broadcastToRoom(roomId, {
+        t: 'control.revoked',
+        roomId,
+        controllerId: session.controllerId,
+        reason,
+      });
+    }
+    this.broadcastToRoom(roomId, { t: 'control.state', session: this.controlView(roomId) });
+  }
+
+  private handleControlEnable(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'control.enable' }>,
+  ): void {
+    const roomId = String(event.roomId ?? '');
+    if (!roomId || roomId.length > 64) {
+      this.controlError(socket, undefined, 'Unknown room');
+      return;
+    }
+    const room = this.db.query('SELECT * FROM rooms WHERE id = ?').get(roomId) as RoomRow | null;
+    if (!room) {
+      this.controlError(socket, roomId, 'Room not found');
+      return;
+    }
+    if (!this.isRoomMember(socket.data.userId, roomId)) {
+      this.controlError(socket, roomId, 'You are not a member of this room');
+      return;
+    }
+    if (room.owner_id !== socket.data.userId) {
+      this.controlError(socket, roomId, 'Only the room host can enable remote control');
+      return;
+    }
+    const stream = this.streams.get(roomId);
+    if (
+      !stream ||
+      stream.hostUserId !== socket.data.userId ||
+      stream.hostSocketId !== socket.data.socketId
+    ) {
+      this.controlError(socket, roomId, 'Start sharing your game before enabling remote control');
+      return;
+    }
+
+    if (event.enabled !== true) {
+      this.endControl(roomId, 'The host turned remote control off.');
+      this.send(socket, { t: 'control.state', session: this.controlView(roomId) });
+      return;
+    }
+
+    const targetLabel = String(event.targetLabel ?? '')
+      .trim()
+      .slice(0, CONTROL_MAX_TARGET_LABEL);
+    if (!targetLabel) {
+      this.controlError(socket, roomId, 'Choose the window you are granting control of');
+      return;
+    }
+
+    let session = this.controlSessions.get(roomId);
+    if (!session) {
+      session = {
+        roomId,
+        hostUserId: socket.data.userId,
+        hostSocketId: socket.data.socketId,
+        enabled: true,
+        targetLabel,
+        queue: [],
+        controllerId: null,
+        grantId: null,
+        token: null,
+        grantExpiresAt: null,
+        controllerActive: false,
+        since: Date.now(),
+        revoked: [],
+      };
+      this.controlSessions.set(roomId, session);
+    } else {
+      session.enabled = true;
+      if (session.targetLabel !== targetLabel && session.controllerId) {
+        // Moving the consent boundary to another window must not silently
+        // extend the current controller's reach.
+        this.dropGrant(session, 'The host changed the controlled window.');
+      }
+      session.targetLabel = targetLabel;
+    }
+    this.broadcastControl(session);
+  }
+
+  private handleControlRequest(socket: AuthedSocket, roomId: string): void {
+    if (!roomId || !this.isRoomMember(socket.data.userId, roomId)) {
+      this.controlError(socket, roomId, 'You are not a member of this room');
+      return;
+    }
+    const session = this.controlSessions.get(roomId);
+    if (!session || !session.enabled) {
+      this.controlError(socket, roomId, 'The host has not enabled remote control');
+      return;
+    }
+    if (session.hostUserId === socket.data.userId) {
+      this.controlError(socket, roomId, 'The host already has local control');
+      return;
+    }
+    if (session.controllerId === socket.data.userId) {
+      this.controlError(socket, roomId, 'You already have control');
+      return;
+    }
+    if (session.queue.includes(socket.data.userId)) {
+      this.send(socket, { t: 'control.state', session: this.controlView(roomId) });
+      return;
+    }
+    if (session.queue.length >= CONTROL_MAX_QUEUE) {
+      this.controlError(socket, roomId, `The control queue is full (${CONTROL_MAX_QUEUE})`);
+      return;
+    }
+    session.queue.push(socket.data.userId);
+    this.broadcastControl(session);
+  }
+
+  private handleControlCancel(socket: AuthedSocket, roomId: string): void {
+    const session = this.controlSessions.get(roomId);
+    if (!session) return;
+    const index = session.queue.indexOf(socket.data.userId);
+    if (index === -1) return;
+    session.queue.splice(index, 1);
+    this.broadcastControl(session);
+  }
+
+  private handleControlReject(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'control.reject' }>,
+  ): void {
+    const session = this.controlHost(socket, String(event.roomId ?? ''));
+    if (!session) return;
+    const targetId = String(event.userId ?? '');
+    const index = session.queue.indexOf(targetId);
+    if (index === -1) {
+      this.controlError(socket, session.roomId, 'That request is no longer in the queue');
+      return;
+    }
+    session.queue.splice(index, 1);
+    this.broadcastControl(session);
+  }
+
+  private handleControlApprove(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'control.approve' }>,
+  ): void {
+    const session = this.controlHost(socket, String(event.roomId ?? ''));
+    if (!session) return;
+    const targetId = String(event.userId ?? '');
+    if (!targetId || targetId.length > 64 || targetId === session.hostUserId) {
+      this.controlError(socket, session.roomId, 'Choose another player to control the game');
+      return;
+    }
+    if (!this.isRoomMember(targetId, session.roomId)) {
+      this.controlError(socket, session.roomId, 'That player is not in this room');
+      return;
+    }
+    if (!this.sockets.get(targetId)?.size) {
+      this.controlError(socket, session.roomId, 'That player is offline');
+      return;
+    }
+
+    const target = this.streamParticipant(targetId);
+    // Handoff is explicit: an existing grant is revoked before the next one.
+    if (session.controllerId && session.controllerId !== targetId) {
+      this.dropGrant(session, `${target.displayName} was given control by the host.`);
+    }
+    session.queue = session.queue.filter((userId) => userId !== targetId);
+
+    const grant: ControlGrantView = {
+      roomId: session.roomId,
+      grantId: crypto.randomUUID(),
+      token: randomToken(),
+      hostUserId: session.hostUserId,
+      controller: target,
+      targetLabel: session.targetLabel ?? 'The shared window',
+      expiresAt: Date.now() + CONTROL_GRANT_TTL_MS,
+    };
+    session.controllerId = targetId;
+    session.grantId = grant.grantId;
+    session.token = grant.token;
+    session.grantExpiresAt = grant.expiresAt;
+    session.controllerActive = false;
+    session.since = Date.now();
+
+    this.send(socket, { t: 'control.granted', grant });
+    this.sendTo(targetId, { t: 'control.granted', grant });
+    this.broadcastControl(session);
+  }
+
+  private handleControlRevoke(socket: AuthedSocket, roomId: string): void {
+    const session = this.controlHost(socket, roomId);
+    if (!session) return;
+    if (!session.controllerId) {
+      this.controlError(socket, roomId, 'Nobody is controlling the game right now');
+      return;
+    }
+    this.dropGrant(session, 'The host revoked control.');
+  }
+
+  private handleControlRelease(socket: AuthedSocket, roomId: string): void {
+    if (!roomId || roomId.length > 64) {
+      this.controlError(socket, undefined, 'Unknown room');
+      return;
+    }
+    const session = this.controlSessions.get(roomId);
+    if (!session || session.controllerId !== socket.data.userId) {
+      this.controlError(socket, roomId, 'You do not have control');
+      return;
+    }
+    this.dropGrant(session, 'The controller released control.');
+  }
+
+  private handleControlActive(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'control.active' }>,
+  ): void {
+    const session = this.controlHost(socket, String(event.roomId ?? ''));
+    if (!session) return;
+    if (!session.grantId || !session.controllerId) return;
+    if (String(event.grantId ?? '') !== session.grantId) {
+      this.controlError(socket, session.roomId, 'That control grant is no longer active');
+      return;
+    }
+    session.controllerActive = event.active === true;
+    this.broadcastControl(session);
+  }
+
+  private handleControlSync(socket: AuthedSocket, roomId: string): void {
+    if (!roomId || !this.isRoomMember(socket.data.userId, roomId)) {
+      this.controlError(socket, roomId, 'You are not a member of this room');
+      return;
+    }
+    this.send(socket, { t: 'control.state', session: this.controlView(roomId) });
+  }
+
+  /**
+   * Control SDP/ICE is relayed only between the host and the controller named by
+   * the current, unexpired grant. The input itself never touches this service.
+   */
+  private handleControlSignal(
+    socket: AuthedSocket,
+    event: Extract<
+      ClientEvent,
+      { t: 'control.offer' | 'control.answer' | 'control.ice' }
+    >,
+  ): void {
+    const now = Date.now();
+    socket.data.controlRecent = socket.data.controlRecent.filter(
+      (stamp) => now - stamp < CONTROL_SIGNAL_WINDOW_MS,
+    );
+    if (socket.data.controlRecent.length >= CONTROL_SIGNAL_BURST) {
+      this.controlError(
+        socket,
+        String(event.roomId ?? ''),
+        'Control signalling is too fast; slow down',
+      );
+      return;
+    }
+
+    const roomId = String(event.roomId ?? '');
+    const to = String(event.to ?? '');
+    const grantId = String(event.grantId ?? '');
+    if (
+      !roomId ||
+      roomId.length > 64 ||
+      !to ||
+      to.length > 64 ||
+      to === socket.data.userId ||
+      !grantId ||
+      grantId.length > 64
+    ) {
+      this.controlError(socket, roomId || undefined, 'Invalid control target');
+      return;
+    }
+
+    const session = this.controlSessions.get(roomId);
+    if (!session || !session.controllerId || !session.grantId) {
+      this.controlError(socket, roomId, 'No control session is active');
+      return;
+    }
+    if (session.revoked.includes(grantId) || grantId !== session.grantId) {
+      this.controlError(socket, roomId, 'That control grant is stale');
+      return;
+    }
+    if (session.grantExpiresAt !== null && session.grantExpiresAt < now) {
+      this.dropGrant(session, 'The control grant expired.');
+      return;
+    }
+
+    const isHost =
+      session.hostUserId === socket.data.userId &&
+      session.hostSocketId === socket.data.socketId;
+    const isController = session.controllerId === socket.data.userId;
+    if (!isHost && !isController) {
+      this.controlError(socket, roomId, 'You are not part of this control session');
+      return;
+    }
+    if (isHost) {
+      if (to !== session.controllerId) {
+        this.controlError(socket, roomId, 'Signalling must go to the current controller');
+        return;
+      }
+      if (event.t === 'control.offer') {
+        this.controlError(socket, roomId, 'The controller offers the input channel');
+        return;
+      }
+    } else {
+      if (to !== session.hostUserId) {
+        this.controlError(socket, roomId, 'Signalling must go to the host');
+        return;
+      }
+      if (event.t === 'control.answer') {
+        this.controlError(socket, roomId, 'The host answers the input channel');
+        return;
+      }
+    }
+
+    if (event.t === 'control.ice') {
+      const candidate = event.candidate as VoiceIceCandidate | undefined;
+      if (
+        !candidate ||
+        typeof candidate.candidate !== 'string' ||
+        candidate.candidate.length > CONTROL_MAX_CANDIDATE_LENGTH ||
+        (candidate.sdpMid != null && typeof candidate.sdpMid !== 'string') ||
+        (candidate.sdpMLineIndex != null && typeof candidate.sdpMLineIndex !== 'number')
+      ) {
+        this.controlError(socket, roomId, 'Invalid ICE candidate');
+        return;
+      }
+      socket.data.controlRecent.push(now);
+      this.sendTo(to, {
+        t: 'control.ice',
+        roomId,
+        from: socket.data.userId,
+        grantId,
+        candidate: {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid ?? null,
+          sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+          usernameFragment: candidate.usernameFragment ?? null,
+        },
+      });
+      return;
+    }
+
+    const sdp = event.sdp;
+    if (typeof sdp !== 'string' || sdp.length === 0 || sdp.length > CONTROL_MAX_SDP_LENGTH) {
+      this.controlError(socket, roomId, 'Invalid session description');
+      return;
+    }
+    socket.data.controlRecent.push(now);
+    this.sendTo(to, { t: event.t, roomId, from: socket.data.userId, grantId, sdp });
+  }
+
   /* ---- Presence -------------------------------------------------------- */
 
   presenceOf(userId: string): Presence {
@@ -1375,6 +1855,23 @@ export class SignalingService {
     if (!set) return;
     set.delete(socket);
     if (set.size === 0) this.sockets.delete(socket.data.userId);
+
+    // A controller who is fully gone cannot keep a grant, and an offline
+    // request cannot be approved meaningfully.
+    const stillConnected = (this.sockets.get(socket.data.userId)?.size ?? 0) > 0;
+    if (!stillConnected) {
+      for (const session of [...this.controlSessions.values()]) {
+        if (session.controllerId === socket.data.userId) {
+          this.dropGrant(session, 'The controller disconnected.');
+        }
+        const index = session.queue.indexOf(socket.data.userId);
+        if (index !== -1) {
+          session.queue.splice(index, 1);
+          this.broadcastControl(session);
+        }
+      }
+    }
+
     this.broadcastPresence(socket.data.userId);
   }
 
@@ -1439,6 +1936,38 @@ export class SignalingService {
       case 'stream.answer':
       case 'stream.ice':
         this.handleStreamSignal(socket, event);
+        return;
+      case 'control.enable':
+        this.handleControlEnable(socket, event);
+        return;
+      case 'control.request':
+        this.handleControlRequest(socket, String(event.roomId ?? ''));
+        return;
+      case 'control.cancel':
+        this.handleControlCancel(socket, String(event.roomId ?? ''));
+        return;
+      case 'control.approve':
+        this.handleControlApprove(socket, event);
+        return;
+      case 'control.reject':
+        this.handleControlReject(socket, event);
+        return;
+      case 'control.revoke':
+        this.handleControlRevoke(socket, String(event.roomId ?? ''));
+        return;
+      case 'control.release':
+        this.handleControlRelease(socket, String(event.roomId ?? ''));
+        return;
+      case 'control.active':
+        this.handleControlActive(socket, event);
+        return;
+      case 'control.sync':
+        this.handleControlSync(socket, String(event.roomId ?? ''));
+        return;
+      case 'control.offer':
+      case 'control.answer':
+      case 'control.ice':
+        this.handleControlSignal(socket, event);
         return;
       default:
         this.send(socket, { t: 'error', message: 'Unknown event' });

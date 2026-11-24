@@ -725,18 +725,16 @@ function StreamingSection() {
       <Group title="Control mode">
         <div className="md-modes">
           <ControlModeCard
-            active={settings.controlMode === 'single'}
+            active
             title="Single player"
-            text="One remote player controls the game at a time, with a queue for the rest."
-            onSelect={() => void updateSettings({ controlMode: 'single' })}
-          />
-          <ControlModeCard
-            active={settings.controlMode === 'multi'}
-            title="Multiple controllers"
-            text="For local co-op games where several inputs can be accepted at once."
-            onSelect={() => void updateSettings({ controlMode: 'multi' })}
+            text="One remote player controls the game at a time, with a queue for everyone else. The host approves each turn and can revoke instantly."
+            onSelect={() => undefined}
           />
         </div>
+        <p className="md-hint">
+          Simultaneous controllers are a future milestone; this build deliberately accepts
+          input from one player only.
+        </p>
       </Group>
     </>
   );

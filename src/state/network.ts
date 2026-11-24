@@ -25,6 +25,7 @@ import { setRemoteAdapter, type RemoteAdapter } from '@/lib/net/hub';
 import { setVoiceTransport } from '@/lib/voice/transport';
 import { useVoiceRoom } from '@/state/voiceRoom';
 import { useStreamRoom } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
 
 /* --------------------------------------------------------------------------
    Connected mode.
@@ -165,9 +166,11 @@ export const useNetwork = create<NetworkState>((set, get) => ({
   signOut: async () => {
     const currentToken = token;
     const currentServer = activeServer;
-    // Voice and screen capture must stop before the session goes away.
+    // Voice, screen capture and remote control must stop before the session
+    // goes away. Rust also releases every held key on sign-out.
     useVoiceRoom.getState().leave();
     useStreamRoom.getState().reset();
+    useControlRoom.getState().reset();
     stopSocket();
     clearInternal();
     set({
@@ -322,6 +325,7 @@ function connectSocket(serverUrl: string, authToken: string): void {
       useNetwork.setState({ status: mapped });
       useVoiceRoom.getState().onConnection(mapped);
       useStreamRoom.getState().onConnection(mapped);
+      useControlRoom.getState().onConnection(mapped);
     },
     onEvent: handleEvent,
   });
@@ -381,6 +385,7 @@ function handleEvent(event: ServerEvent): void {
     default: {
       if (event.t.startsWith('voice.')) useVoiceRoom.getState().handleEvent(event);
       else if (event.t.startsWith('stream.')) useStreamRoom.getState().handleEvent(event);
+      else if (event.t.startsWith('control.')) useControlRoom.getState().handleEvent(event);
       return;
     }
   }

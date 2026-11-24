@@ -8,6 +8,7 @@ import {
   modeLabel,
 } from '@/lib/stream/model';
 import { useStreamRoom } from '@/state/streamRoom';
+import { useControlRoom } from '@/state/controlRoom';
 
 /**
  * Host setup. The Start button is the user gesture that opens WebView2's
@@ -38,6 +39,10 @@ export function StreamModal({
   const submit = async () => {
     if (busy) return;
     setBusy(true);
+    if (hosting) {
+      // A different capture source means a different consent boundary.
+      useControlRoom.getState().revoke('The host changed the shared window.');
+    }
     const ok = hosting
       ? await switchSource({ roomId, mode, preset })
       : await startHosting({ roomId, mode, preset });

@@ -1,16 +1,25 @@
 mod commands;
+mod control;
 mod db;
 mod models;
 
 use tauri::Manager;
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            // MELDRIFT_DATA_DIR lets a second local instance keep its own
+            // session while testing multi-client behaviour on one PC.
+            let data_dir = match std::env::var("MELDRIFT_DATA_DIR") {
+                Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path),
+                _ => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&data_dir)?;
             let database = db::Db::open(&data_dir.join("meldrift.db"))?;
             app.manage(database);
+            // Input injection and the Ctrl+Alt+F12 emergency stop only exist
+            // while the desktop app is running.
+            control::init(app.handle());
             Ok(())
         })
         // The window is created hidden so the user never sees a white flash
@@ -18,6 +27,12 @@ pub fn run() {
         .on_page_load(|window, _payload| {
             let _ = window.show();
             let _ = window.set_focus();
+        })
+        // A closing window must never leave a remotely held key down.
+        .on_window_event(|_window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                control::shutdown();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
@@ -38,7 +53,19 @@ pub fn run() {
             commands::touch_game,
             commands::remove_game,
             commands::clear_workspace,
+            control::control_targets,
+            control::control_arm,
+            control::control_end,
+            control::control_inject,
+            control::control_armed,
+            control::control_resume,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Meldrift failed to start");
+
+    app.run(|_app, event| {
+        if let tauri::RunEvent::Exit = event {
+            control::shutdown();
+        }
+    });
 }

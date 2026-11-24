@@ -1,6 +1,6 @@
 # Meldrift status
 
-Version: `0.4.0-alpha.1` · Updated: 2026-11-24
+Version: `0.5.0-alpha.1` · Updated: 2026-11-25
 
 ## Completed
 
@@ -89,6 +89,33 @@ Version: `0.4.0-alpha.1` · Updated: 2026-11-24
 - Capture and encoder resources stop on Stop, source close, room leave,
   sign-out, socket loss and app close. No frozen frame is left marked live.
 
+**M5 — Remote control and player handoff**
+- Host-approved keyboard and mouse forwarding into a host-selected running
+  window, one controller at a time, with a FIFO queue capped at eight requests.
+- Dedicated ordered/reliable WebRTC data channel between the approved
+  controller and the host, separate from video and voice. The signaling server
+  only relays SDP/ICE for the current grant; input never passes through it.
+- Rust `SendInput` injection with scan code and virtual key together, relative
+  mouse movement, buttons, vertical wheel, held-input tracking and release on
+  every teardown path.
+- Server authorization: host-only enable/approve/reject/revoke/disable, grant id
+  plus 192-bit token delivered only to the two participants, monotonically
+  increasing sequence numbers, stale/revoked grant rejection, direction and
+  target validation, SDP/ICE size limits and a per-socket signalling rate limit.
+- Focus safety: approval arms the chosen window and focuses it; a 400 ms
+  watchdog pauses injection and releases held input if focus leaves, and
+  disarms on close/minimise. Host can resume the same grant. Emergency stop is
+  available in the panel and globally as `Ctrl+Alt+F12`.
+- Room stage shows a persistent control badge and a full-surface capture layer
+  with pointer lock, `Esc` release, keyboard/mouse forwarding and a live
+  round-trip indicator. Context panel and queue tab show host, controller, queue
+  and armed window; host and spectator actions are separate.
+- Every disconnect/cleanup path ends the grant and releases input: revoke,
+  release, handoff, controller or host socket close, stream stop, room leave,
+  sign-out, source change, target close/minimise and app exit.
+- Gamepad forwarding and multiple simultaneous controllers are **not**
+  implemented; see `docs/REMOTE_CONTROL.md`.
+
 **Distribution**
 - NSIS installer packaged as `artifacts/Meldrift-Setup.exe`.
 - Version consistency guard, SHA-256 manifest and build report scripts.
@@ -100,21 +127,22 @@ Version: `0.4.0-alpha.1` · Updated: 2026-11-24
 Automated:
 
 - `bun run typecheck` — clean.
-- `bun run test` — **56 tests passing** across 5 files. The M4 additions cover
-  preset/capture bounds, window vs display constraints, capture error text,
-  adaptive pressure/recovery, both real `RTCStatsReport` iteration shapes,
-  per-viewer connection lifecycle, track replacement, encoding parameters and
-  cleanup.
-- `cd server && bun test` — **35 integration tests passing** against a real
-  HTTP + WebSocket server, including 10 streaming tests: non-member/non-host
-  rejection, malformed modes/presets, one stream per room, room snapshots,
-  viewer opt-in/opt-out and retry offers, the four-viewer cap, host
-  self-watch rejection, offer/answer/ICE routing, malformed/oversized payloads,
-  signaling rate limits, host-only preset control, host socket-close cleanup,
-  viewer socket-close cleanup.
-- `cargo test` — **8 tests passing** (migrations, invite codes, room/message
-  flows, scope rejection, cascade deletes, session round-trip).
-- `bun run build` — 425 kB JS / 67 kB CSS.
+- `bun run test` — **74 tests passing** across 6 files. M5 adds 18 tests:
+  physical key mapping and blocked shortcuts, input frame validation, mouse
+  coalescing and key ordering, held-input release, grant-token and sequence
+  gating, mouse-only rate limiting that still passes key transitions,
+  controller offer/hello/ICE/ack behaviour, host answer/activation/ack ordering,
+  channel close, wrong channel labels and the injection pump.
+- `cd server && bun test` — **45 integration tests passing** against a real
+  HTTP + WebSocket server. M5 adds 10 control tests: stream/host/membership
+  authorization, FIFO queue with deduplication and cap, approval/handoff with
+  immediate revocation of the previous controller, host-only revoke, controller
+  release, disconnect/stream-stop/host-close cleanup, signalling direction,
+  stale/oversized/flood rejection and replayed grants after handoff.
+- `cargo test` — **9 tests passing, 1 ignored** (migrations, invite codes,
+  room/message flows, scope rejection, cascade deletes, session round-trip,
+  control batch validation) plus the ignored native `SendInput` test.
+- `bun run build` — 463 kB JS / 72 kB CSS.
 - `bun run app:build` — release `meldrift.exe` and NSIS installer built
   successfully.
 
@@ -150,6 +178,54 @@ WebView2 profiles and app-data folders, one fresh signaling database):
 **Not verified:** real microphone → speaker audio between two physical machines,
 and human listening. That requires a second PC with a working physical
 microphone; see the limitations below.
+
+### M5 native control run (same PC, three independent release instances)
+
+Three native release clients ran against a fresh signaling database: host
+`m5host`, controllers `m5guest` and `m5guest2`, in room `M5 Control`. Each had
+its own `MELDRIFT_DATA_DIR` and `WEBVIEW2_USER_DATA_FOLDER`. Sessions were
+seeded through the app's own `save_session` IPC; the rest of the run drove the
+real UI and browser input through WebView2 DevTools (DOM clicks,
+`Input.dispatchKeyEvent`, `Input.dispatchMouseEvent`), so transport and Rust
+injection were the production code paths.
+
+- **Stream + control:** host captured the real display (`screen:0:0:live`), with
+  one and then two viewers. Remote control was enabled for the harmless
+  `Meldrift Input Target — powershell.exe` window, never a game with anti-cheat.
+- **Keyboard:** forwarded keys appeared in the target's TextBox; after the guest
+  rounds it contained `wwwwwqz` (the host's keyboard layout produced exactly the
+  forwarded characters). The controller HUD reported **3 ms** send→inject→ack
+  round trip.
+- **Mouse:** wheel produced `wheel:120`, left clicks produced
+  `mousedown:Left`/`mouseup:Left`, and right clicks produced `mousedown:Right`.
+  Pointer lock was granted and forwarded movement moved the host cursor from
+  `(968,541)` to `(1268,741)`, exactly the +300/+200 deltas sent.
+- **Revoke:** the host revoked while the controller had a button held; the
+  controller's surface disappeared and a key sent afterwards did not reach the
+  target (its text stayed `wwwww`).
+- **Handoff:** the host approved `m5guest2` while `m5guest` held the grant; the
+  first grant was revoked, the second controller started, and its `q` reached the
+  target (`wwwwwq`).
+- **Emergency stop:** `Ctrl+Alt+F12` sent globally turned control off, revoked
+  the controller and cleared the armed window.
+- **Controller disconnect:** closing the controller app made the host show
+  nobody controlling, cleared the armed target and removed its video.
+- **Stream stop:** stopping the stream with an active grant disabled remote
+  control on both sides while the two clients stayed in voice.
+- **Host shutdown:** closing the host ended the stream, revoked the grant and
+  cleared control on the remaining client.
+- **Voice coexistence:** host and second controller joined voice ("2 in
+  channel") while video was live and the second controller was actively
+  controlling. The available microphone was NVIDIA Broadcast, so audio content
+  was not judged; this checks coexistence and signaling, not audio quality.
+
+**Not verified natively:** two physical PCs on a real network, physical
+keyboards/mice (browser-level input events were used), a game with raw-input or
+anti-cheat behaviour, target-window close/minimise (covered by the watchdog and
+unit tests but not exercised in this run), and CPU use isolated from the game
+and browser processes. The target's WinForms TextBox swallowed one right-button
+release while its context menu opened; the controller had sent both transitions
+and Meldrift releases held buttons on teardown.
 
 ### M4 native streaming run (same PC, separate WebView2 profiles)
 
@@ -211,7 +287,8 @@ separate app-data directories or two machines.
 
 ## In progress
 
-- Nothing. M4 is complete; M5 (remote input/control) has not started.
+- Nothing. M5 is complete. Gamepad forwarding and multiple simultaneous
+  controllers remain future milestones and are not presented as available.
 
 ## Known bugs
 
@@ -268,7 +345,22 @@ separate app-data directories or two machines.
 - **No native two-machine verification.** All native clients ran on one PC with
   one GPU and virtual microphones; the synthetic-voice and shared-app-data
   limitations above still apply.
-- **Remote control is absent.** The permission model is documented, not built.
+- **Remote control injects at the OS foreground**, not inside the chosen
+  window. `SendInput` targets whatever is foreground; Meldrift arms the selected
+  window and pauses/releases input when focus leaves, but a brief race or another
+  process stealing focus is possible. Elevated games need Meldrift at the same
+  integrity level (UIPI), and games with kernel anti-cheat may ignore or flag
+  synthetic input. This is documented, not bypassed.
+- **One remote controller at a time.** The queue is capped at eight; multiple
+  simultaneous controllers are not implemented.
+- **Gamepads are not forwarded.** A reliable path needs a virtual gamepad driver
+  installed with administrator rights; M5 does not install one.
+- **Pointer lock and `Esc`:** releasing control with `Esc` also delivers that
+  key-down to the game (usually opening its pause menu).
+- **Native control verification used browser-level input events and one PC.**
+  The full transport and real `SendInput` were exercised, but not physical
+  keyboards on two machines, and remote control has only been measured on a
+  loopback LAN path.
 - **Server rooms cannot be renamed, deleted or left** in this build. Local rooms
   can.
 - **Presence** is online/idle/offline with no inactivity timer.
@@ -285,11 +377,14 @@ separate app-data directories or two machines.
 
 ## Next steps
 
-1. **M4 follow-ups**: two-machine/TURN verification, captured-window-close test,
-   host-leave/sign-out cleanup run, hardware-encoder measurement, optional SFU
-   experiment for more than four viewers.
-2. **M3 follow-ups**: two-machine physical-mic test, per-participant volume,
+1. **M5 follow-ups**: two-machine/real-network control run, physical keyboard
+   and mouse verification, elevated-game and raw-input compatibility matrix,
+   target-close native test, isolated CPU measurement under active control,
+   virtual-gamepad driver design (needs explicit approval).
+2. **M4 follow-ups**: two-machine/TURN verification, captured-window-close test,
+   hardware-encoder measurement, optional SFU experiment for more than four
+   viewers.
+3. **M3 follow-ups**: two-machine physical-mic test, per-participant volume,
    TURN deployment guide validation against coturn.
-3. **M5**: input forwarding behind host grants, queue, handoff, emergency stop.
 4. **M6**: profiling, soak tests, reconnect matrix, installer upgrade tests.
 5. **M7**: signed releases on GitHub Releases.

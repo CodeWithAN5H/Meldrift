@@ -740,3 +740,290 @@
     display: none;
   }
 }
+
+/* ---- Remote control (M5) ------------------------------------------------ */
+
+.md-controlpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.md-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.md-control__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.md-control__note strong {
+  color: var(--text-secondary);
+  font-weight: 550;
+}
+
+.md-control__targetrow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.md-control__targetrow .md-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.md-control__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.md-control__who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+}
+
+.md-control__who[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised));
+}
+
+.md-control__whobody {
+  min-width: 0;
+  flex: 1;
+}
+
+.md-control__name {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.md-control__meta {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+.md-control__icon {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.md-control__icon[data-on="true"] {
+  color: var(--green);
+}
+
+.md-control__live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--accent-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-control__waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+.md-control__armed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-control__armed[data-idle="true"] {
+  opacity: 0.8;
+}
+
+.md-control__state {
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.md-control__state[data-on="true"] {
+  color: var(--green);
+}
+
+.md-control__stagebadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 20%, #08060c);
+  border: 1px solid color-mix(in srgb, var(--accent-bright) 55%, transparent);
+  color: var(--accent-bright);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.md-control__stagebadge[data-paused="true"] {
+  background: var(--amber-wash);
+  border-color: color-mix(in srgb, var(--amber) 50%, transparent);
+  color: var(--amber);
+}
+
+.md-controlqueue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-controlqueue__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.md-controlqueue__pos {
+  width: 14px;
+  flex: none;
+  text-align: center;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-controlqueue__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+}
+
+.md-controlqueue__actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.md-controlqueue__wait {
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+/* The controller's video surface captures the mouse and keyboard. */
+.md-controlsurface {
+  position: absolute;
+  inset: 0;
+  outline: none;
+  cursor: crosshair;
+  background: #050408;
+}
+
+.md-controlsurface:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: -2px;
+}
+
+.md-controlsurface[data-locked="true"] {
+  cursor: none;
+}
+
+.md-controlsurface__hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: linear-gradient(180deg, transparent, rgba(5, 4, 8, 0.9) 48%);
+  cursor: default;
+}
+
+.md-controlsurface__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--accent-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-controlsurface__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-controlsurface__capture {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 78%;
+  padding: 9px 13px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-accent, var(--line));
+  background: rgba(8, 6, 12, 0.86);
+  color: var(--text-secondary);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.md-controlsurface__capture:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}

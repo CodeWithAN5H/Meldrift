@@ -1,4 +1,4 @@
-# Networking (M2), voice signaling (M3) and stream signaling (M4)
+# Networking (M2), voice (M3), stream (M4) and control signaling (M5)
 
 Meldrift is local-first. Signed out, every room, message and friend lives in
 SQLite on that PC. Signing in switches the workspace to a **signaling service**
@@ -58,7 +58,9 @@ src/lib/net/map.ts        Pure wire ↔ UI model mapping and message merging
 src/lib/net/hub.ts        The seam the workspace store uses to detect "online"
 src/state/network.ts      Session, connection status, presence, requests, adapter
 src/lib/stream/           Video presets/adaptation, stats, host and viewer peers
+src/lib/control/          Key map, input frames, input peer sessions, Tauri bridge
 src/state/streamRoom.ts   Capture, stream session, viewer stats, cleanup
+src/state/controlRoom.ts  Controller/host control session, queue and cleanup
 ```
 
 ## Stream signaling (M4)
@@ -78,6 +80,28 @@ rate-limited per socket (300 messages / 10 s). The server ends the stream when
 the host socket closes and removes only the viewer whose socket closes. Stream
 state is in-memory; media is peer-to-peer. Host upload grows with each viewer
 (see `docs/STREAMING.md`).
+
+## Control signaling (M5)
+
+```
+control.enable/disable   host socket only, requires a live stream and target label
+control.request/cancel   member, not host; queue capped at eight, deduplicated
+control.approve/reject   host socket only; approve also revokes any previous grant
+control.revoke/release   host revoke / current controller release
+control.active           host socket, current grant id only (input channel state)
+control.sync             snapshot of the room's control session
+control.offer/answer/ice relayed only between the host and current controller
+```
+
+Every event is checked against membership, stream ownership, the current grant
+id, the sender's role in that grant and (for SDP/ICE) the expected direction and
+target. Revoked grant ids are remembered, so a replayed old grant cannot reopen
+control. SDP is capped at 60 kB, candidates at 1.2 kB, and control signalling
+has a per-socket budget of 160 messages with a 40/s refill. Input never passes
+through the server: the data channel is peer-to-peer and the host validates a
+grant token plus increasing sequence numbers. Cleanup runs on revoke, release,
+handoff, controller or host socket close, stream stop, room leave and sign-out.
+See `docs/REMOTE_CONTROL.md`.
 
 `workspace.ts` never imports `network.ts` (that would be a cycle). The network
 store installs a `RemoteAdapter` in `hub.ts` while connected; workspace actions

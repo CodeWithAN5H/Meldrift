@@ -6,10 +6,12 @@ A free Windows desktop app where friends gather in rooms, talk over voice, watch
 host's game live and take turns controlling it. No subscriptions, no ads, no
 premium tier.
 
-> **Status: `0.4.0-alpha.1`** — the permanent interface, the local workspace, the
-> self-hostable networking service, **real WebRTC voice** and **live game/window
-> streaming** between signed-in clients are working. Remote control (M5) is not
-> built; anything absent is visibly marked as such in the app.
+> **Status: `0.5.0-alpha.1`** — the permanent interface, the local workspace, the
+> self-hostable networking service, **real WebRTC voice**, **live game/window
+> streaming** and **host-approved remote keyboard/mouse control with player
+> handoff** between signed-in clients are working. Gamepad forwarding and
+> multiple simultaneous controllers are future milestones; anything absent is
+> visibly marked as such in the app.
 
 ---
 
@@ -24,7 +26,8 @@ premium tier.
 | Accounts, rooms, chat, DMs, friends, presence across PCs | Working when signed in to a self-hosted signaling server (M2) |
 | Room voice (M3) | Working WebRTC/Opus mesh for up to 8 people: real capture, mute/deafen, push-to-talk, mic and output selection, input meter, real speaking and connection states, ICE restart and signaling reconnection |
 | Game/window streaming (M4) | Working real capture through WebView2 + Windows Graphics Capture, live WebRTC video to up to 4 viewers, window or entire-display source, adaptive Auto/Smooth/Balanced/Quality presets, real encoder/viewer stats, voice unaffected |
-| Remote input and control handoff | **Not built** (M5) |
+| Remote input and control handoff (M5) | Working: real Win32 `SendInput` for keyboard, mouse buttons, movement and wheel; host-selected target window, one controller at a time with a FIFO queue, explicit approval, instant revoke/retake, emergency stop (`Ctrl+Alt+F12`), automatic release on every disconnect/stream-stop/app-exit path. Focus-based, not a security sandbox. |
+| Gamepad forwarding | **Not built** — requires a privileged virtual-gamepad driver; documented future work |
 | Signed installer + releases | NSIS packaging and CI ready; signing needs a certificate |
 
 Meldrift does not show fake peers, fake latency or a fake "connected" state. A
@@ -96,6 +99,22 @@ bitrate and RTT; Smooth protects frame rate; Quality protects resolution.
 See `docs/STREAMING.md` for capture architecture, codecs, bandwidth, WebView2
 limits and troubleshooting. Native verification results are in `docs/STATUS.md`.
 
+## Remote control
+
+With a stream live, the host can enable **Remote control**, choose the window to
+control, and approve one queued player at a time. The controller clicks **Start
+controlling**; its keyboard, mouse movement, buttons and wheel then go over a
+dedicated WebRTC data channel and are injected on the host with Windows
+`SendInput`. The host can revoke, retake or use **Emergency stop**
+(`Ctrl+Alt+F12`) instantly, and every disconnect/teardown path releases held
+input. Control is off by default, one controller at a time, and no host input is
+captured or sent anywhere.
+
+This is focus-based injection, not a security sandbox: elevated games and
+kernel anti-cheat may reject synthetic input, and gamepad forwarding is not
+implemented. See `docs/REMOTE_CONTROL.md` for architecture, security, limits and
+troubleshooting.
+
 ## Build the installer
 
 ```bash
@@ -119,6 +138,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 - `docs/ARCHITECTURE.md` — modules, data flow, performance and security decisions
 - `docs/NETWORKING.md` — signaling service, wire protocol, client behaviour, limits
 - `docs/VOICE.md` — voice architecture, signaling flow, STUN/TURN, ports, costs, limits
+- `docs/REMOTE_CONTROL.md` — input transport, Win32 injection, consent, safety, limits
 - `docs/STATUS.md` — completed work, known bugs, measured results, next steps
 - `docs/RELEASING.md` — versioning, installer, signing and GitHub Releases
 
