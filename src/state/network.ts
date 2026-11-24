@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   BootstrapView,
   FriendRequestView,
+  IceServerView,
   Presence,
   PublicUser,
   RoomMemberView,
@@ -21,6 +22,8 @@ import {
 import { RealtimeConnection, type SocketStatus } from '@/lib/net/realtime';
 import { toFriend, toMessage, toProfile, toRoom } from '@/lib/net/map';
 import { setRemoteAdapter, type RemoteAdapter } from '@/lib/net/hub';
+import { setVoiceTransport } from '@/lib/voice/transport';
+import { useVoiceRoom } from '@/state/voiceRoom';
 
 /* --------------------------------------------------------------------------
    Connected mode.
@@ -66,6 +69,7 @@ let socket: RealtimeConnection | null = null;
 let token: string | null = null;
 let initializing = false;
 let activeServer = '';
+let iceServers: IceServerView[] = [];
 /** peerId → conversationId, so DMs keep using the friend id as their scope. */
 const conversations = new Map<string, string>();
 const peersByConversation = new Map<string, string>();
@@ -160,6 +164,8 @@ export const useNetwork = create<NetworkState>((set, get) => ({
   signOut: async () => {
     const currentToken = token;
     const currentServer = activeServer;
+    // Voice must stop before the face of the session goes away.
+    useVoiceRoom.getState().leave();
     stopSocket();
     clearInternal();
     set({
@@ -230,10 +236,21 @@ function stopSocket(): void {
 
 function clearInternal(): void {
   setRemoteAdapter(null);
+  setVoiceTransport(null);
   token = null;
   activeServer = '';
+  iceServers = [];
   conversations.clear();
   peersByConversation.clear();
+}
+
+/** Voice sends through the same socket as chat; it never opens its own. */
+function installVoiceTransport(selfId: string): void {
+  setVoiceTransport({
+    selfId,
+    iceServers,
+    send: (event) => socket?.send(event) ?? false,
+  });
 }
 
 async function establish(serverUrl: string, authToken: string, hintUser?: PublicUser): Promise<void> {
@@ -247,6 +264,17 @@ async function establish(serverUrl: string, authToken: string, hintUser?: Public
     connectSocket(serverUrl, authToken);
     setRemoteAdapter(makeAdapter(serverUrl, data.user.id));
     useNetwork.setState({ user: data.user, status: 'connecting' });
+    installVoiceTransport(data.user.id);
+    // ICE configuration is optional: voice still works on a LAN without STUN.
+    void signalingApi
+      .voiceConfig(serverUrl, authToken)
+      .then((config) => {
+        iceServers = config.iceServers;
+        installVoiceTransport(data.user.id);
+      })
+      .catch(() => {
+        iceServers = [];
+      });
     try {
       await port.saveSession({ serverUrl, token: authToken, user: data.user });
     } catch {
@@ -290,6 +318,7 @@ function connectSocket(serverUrl: string, authToken: string): void {
       const current = useNetwork.getState();
       if (mapped === 'offline' && current.status === 'signed-out') return;
       useNetwork.setState({ status: mapped });
+      useVoiceRoom.getState().onConnection(mapped);
     },
     onEvent: handleEvent,
   });
@@ -346,8 +375,10 @@ function handleEvent(event: ServerEvent): void {
       useUi.getState().pushToast(event.message, 'error');
       return;
     }
-    default:
+    default: {
+      if (event.t.startsWith('voice.')) useVoiceRoom.getState().handleEvent(event);
       return;
+    }
   }
 }
 

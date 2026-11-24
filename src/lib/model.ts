@@ -79,6 +79,11 @@ export interface Settings {
   streamHeight: number;
   streamBitrateKbps: number;
   controlMode: ControlMode;
+  /** Optional user-supplied ICE infrastructure. Empty means "use the server's". */
+  voiceStunUrl: string;
+  voiceTurnUrl: string;
+  voiceTurnUsername: string;
+  voiceTurnCredential: string;
   reduceMotion: boolean;
   compactDensity: boolean;
   desktopNotifications: boolean;
@@ -153,6 +158,10 @@ export function defaultSettings(): Settings {
     streamHeight: 1080,
     streamBitrateKbps: 12000,
     controlMode: 'single',
+    voiceStunUrl: '',
+    voiceTurnUrl: '',
+    voiceTurnUsername: '',
+    voiceTurnCredential: '',
     reduceMotion: false,
     compactDensity: false,
     desktopNotifications: true,
@@ -169,6 +178,8 @@ export function sanitizeSettings(raw: Partial<Settings> | null | undefined): Set
       : fallback;
   const bool = (v: unknown, fallback: boolean) =>
     typeof v === 'boolean' ? v : fallback;
+  const text = (v: unknown, max: number, fallback: string) =>
+    typeof v === 'string' ? v.slice(0, max) : fallback;
   return {
     micDeviceId: typeof raw.micDeviceId === 'string' ? raw.micDeviceId : base.micDeviceId,
     speakerDeviceId:
@@ -187,6 +198,10 @@ export function sanitizeSettings(raw: Partial<Settings> | null | undefined): Set
     streamHeight: num(raw.streamHeight, 360, 2160, base.streamHeight),
     streamBitrateKbps: num(raw.streamBitrateKbps, 500, 50000, base.streamBitrateKbps),
     controlMode: raw.controlMode === 'multi' ? 'multi' : 'single',
+    voiceStunUrl: text(raw.voiceStunUrl, 512, base.voiceStunUrl),
+    voiceTurnUrl: text(raw.voiceTurnUrl, 512, base.voiceTurnUrl),
+    voiceTurnUsername: text(raw.voiceTurnUsername, 128, base.voiceTurnUsername),
+    voiceTurnCredential: text(raw.voiceTurnCredential, 256, base.voiceTurnCredential),
     reduceMotion: bool(raw.reduceMotion, base.reduceMotion),
     compactDensity: bool(raw.compactDensity, base.compactDensity),
     desktopNotifications: bool(raw.desktopNotifications, base.desktopNotifications),

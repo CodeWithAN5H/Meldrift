@@ -2,14 +2,15 @@ import { AudioLines, MicOff, Radio } from 'lucide-react';
 import { Avatar, IconButton } from '@/components/ui';
 import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
+import { useVoiceRoom } from '@/state/voiceRoom';
 import { useWorkspace } from '@/state/workspace';
 import type { Profile } from '@/lib/model';
 import { MicLevel } from './MicLevel';
 
 /**
- * Sidebar voice panel. It reports the real local capture state — never a
- * simulated "connected to channel" status, because the voice service that
- * joins peers lands in milestone M3.
+ * Sidebar voice panel. It reports the real local capture state and, while a
+ * room voice session is active, the real mesh state from `voiceRoom` — never a
+ * simulated "connected to channel" status.
  */
 export function VoiceCard({
   profile,
@@ -25,27 +26,47 @@ export function VoiceCard({
   const stop = useVoice((state) => state.stop);
   const openModal = useUi((state) => state.openModal);
   const settings = useWorkspace((state) => state.settings);
+  const inVoice = useVoiceRoom((state) => Boolean(state.roomId));
+  const voiceRoomName = useVoiceRoom((state) => state.roomName);
+  const voiceMuted = useVoiceRoom((state) => state.muted);
+  const voiceStatus = useVoiceRoom((state) => state.status);
+  const voicePeers = useVoiceRoom((state) => Object.keys(state.participants).length);
+  const toggleVoiceMuted = useVoiceRoom((state) => state.toggleMuted);
+  const leaveVoice = useVoiceRoom((state) => state.leave);
 
   const deviceLabel =
     inputs.find((device) => device.deviceId === settings.micDeviceId)?.label ||
     inputs[0]?.label ||
     'System default microphone';
 
+  const voiceLabel = inVoice
+    ? voiceStatus === 'connected'
+      ? `In voice \u00b7 ${voiceRoomName ?? 'Room'}`
+      : voiceStatus === 'reconnecting'
+        ? 'Voice reconnecting\u2026'
+        : voiceStatus === 'error'
+          ? 'Voice failed'
+          : 'Connecting voice\u2026'
+    : capturing
+      ? micEnabled
+        ? 'Microphone live'
+        : 'Microphone muted'
+      : 'Voice not connected';
+
   return (
-    <div className="md-voicecard" data-live={capturing && micEnabled}>
+    <div className="md-voicecard" data-live={inVoice ? voiceStatus === 'connected' : capturing && micEnabled}>
       <div className="md-voicecard__head">
         <span className="md-voicecard__status">
-          {capturing ? (
+          {inVoice || capturing ? (
             <Radio size={13} className="md-voicecard__signal" />
           ) : (
             <MicOff size={13} className="md-voicecard__signal" />
           )}
-          <span data-muted={capturing && !micEnabled}>
-            {capturing
-              ? micEnabled
-                ? 'Microphone live'
-                : 'Microphone muted'
-              : 'Voice not connected'}
+          <span data-muted={inVoice ? voiceMuted : capturing && !micEnabled}>
+            {voiceLabel}
+            {inVoice && voiceStatus === 'connected'
+              ? ` \u00b7 ${voicePeers + 1} in channel`
+              : ''}
           </span>
         </span>
         <IconButton
@@ -63,7 +84,7 @@ export function VoiceCard({
         </div>
       ) : (
         <p className="md-voicecard__caption">
-          Mic check is local only. Voice transmission arrives in M3.
+          Mic check is local. Join a room's voice channel to talk with its members.
         </p>
       )}
 
@@ -83,14 +104,16 @@ export function VoiceCard({
           type="button"
           className="md-voicecard__action"
           onClick={() => {
-            if (capturing) {
+            if (inVoice) {
+              leaveVoice();
+            } else if (capturing) {
               void stop();
             } else {
               openModal('mic-test');
             }
           }}
         >
-          {capturing ? 'Stop' : 'Test'}
+          {inVoice ? 'Leave' : capturing ? 'Stop' : 'Test'}
         </button>
       </div>
 
@@ -101,11 +124,11 @@ export function VoiceCard({
         <span aria-hidden="true">·</span>
         <button
           type="button"
-          onClick={() => setMicEnabled(!micEnabled)}
-          disabled={!capturing}
-          title={capturing ? undefined : 'Start a mic check first'}
+          onClick={() => (inVoice ? toggleVoiceMuted() : setMicEnabled(!micEnabled))}
+          disabled={!inVoice && !capturing}
+          title={!inVoice && !capturing ? 'Start a mic check first' : undefined}
         >
-          {micEnabled ? 'Mute' : 'Unmute'}
+          {(inVoice ? voiceMuted : !micEnabled) ? 'Unmute' : 'Mute'}
         </button>
         <span aria-hidden="true">·</span>
         <span className="md-voicecard__activity">

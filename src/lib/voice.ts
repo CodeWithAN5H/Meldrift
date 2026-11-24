@@ -1,12 +1,10 @@
 /* --------------------------------------------------------------------------
    Voice engine
 
-   Real microphone capture and analysis. This is the foundation the WebRTC
-   session in M3 plugs into: capture, gain, mute and level metering already
-   work, so the audio graph and device handling are validated early.
-
-   No transmission happens here. Nothing in the UI claims a peer connection
-   exists until the signaling service lands.
+   Real microphone capture and analysis. The WebRTC mesh in
+   `lib/voice/session.ts` sends `outboundStream`, so the input-volume slider
+   applies to what other people hear, not just the local meter. Muting disables
+   both the microphone tracks and the processed outbound tracks.
    -------------------------------------------------------------------------- */
 
 export interface CaptureOptions {
@@ -25,10 +23,15 @@ export class VoiceEngine {
   private analyser: AnalyserNode | null = null;
   private gainNode: GainNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private destination: MediaStreamAudioDestinationNode | null = null;
   private frame = 0;
   private smoothed = 0;
   private listeners = new Set<LevelListener>();
   private muted = false;
+  /** Intentional stop() also ends tracks; that must not look like a device loss. */
+  private stopping = false;
+  /** Set by the voice store to recover when Windows removes the device. */
+  onTrackEnded: (() => void) | null = null;
 
   get active(): boolean {
     return this.stream !== null;
@@ -36,6 +39,19 @@ export class VoiceEngine {
 
   get mediaStream(): MediaStream | null {
     return this.stream;
+  }
+
+  /**
+   * The processed track that goes to peers: microphone → input gain →
+   * destination. WebRTC sends this stream, so the input volume slider applies
+   * to what other people hear rather than only to the local meter.
+   */
+  get outboundStream(): MediaStream | null {
+    return this.destination?.stream ?? null;
+  }
+
+  get outboundTrack(): MediaStreamTrack | null {
+    return this.destination?.stream.getAudioTracks()[0] ?? null;
   }
 
   get trackLabel(): string | null {
@@ -55,6 +71,7 @@ export class VoiceEngine {
       video: false,
     };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    this.stopping = false;
     this.stream = stream;
 
     const AudioCtor: typeof AudioContext =
@@ -76,18 +93,31 @@ export class VoiceEngine {
     analyser.smoothingTimeConstant = 0.6;
     this.analyser = analyser;
 
+    const destination = context.createMediaStreamDestination();
+    this.destination = destination;
+
     source.connect(gainNode);
     gainNode.connect(analyser);
+    gainNode.connect(destination);
 
     for (const track of stream.getAudioTracks()) {
       track.enabled = !this.muted;
-      track.addEventListener('ended', () => this.stop(), { once: true });
+      track.addEventListener(
+        'ended',
+        () => {
+          if (!this.stopping) this.onTrackEnded?.();
+          void this.stop();
+        },
+        { once: true },
+      );
     }
+    for (const track of destination.stream.getAudioTracks()) track.enabled = !this.muted;
 
     this.tick();
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.frame) {
       cancelAnimationFrame(this.frame);
       this.frame = 0;
@@ -95,12 +125,15 @@ export class VoiceEngine {
     this.source?.disconnect();
     this.gainNode?.disconnect();
     this.analyser?.disconnect();
+    this.destination?.disconnect();
     this.stream?.getTracks().forEach((track) => track.stop());
+    this.destination?.stream.getTracks().forEach((track) => track.stop());
     const context = this.context;
     this.stream = null;
     this.source = null;
     this.gainNode = null;
     this.analyser = null;
+    this.destination = null;
     this.context = null;
     this.smoothed = 0;
     this.emit(0);
@@ -114,6 +147,13 @@ export class VoiceEngine {
     this.stream?.getAudioTracks().forEach((track) => {
       track.enabled = !muted;
     });
+    this.destination?.stream.getAudioTracks().forEach((track) => {
+      track.enabled = !muted;
+    });
+  }
+
+  get isMuted(): boolean {
+    return this.muted;
   }
 
   setGain(value: number): void {
@@ -167,6 +207,19 @@ export async function listAudioOutputs(): Promise<MediaDeviceInfo[]> {
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((device) => device.kind === 'audiooutput');
+}
+
+export async function applySink(audio: HTMLAudioElement, deviceId: string): Promise<boolean> {
+  const target = audio as HTMLAudioElement & {
+    setSinkId?: (id: string) => Promise<void>;
+  };
+  if (typeof target.setSinkId !== 'function') return false;
+  try {
+    await target.setSinkId(deviceId === 'default' ? '' : deviceId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function describeMediaError(error: unknown): string {

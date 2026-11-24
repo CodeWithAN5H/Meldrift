@@ -4,7 +4,9 @@ import {
   Eye,
   Gamepad2,
   ListOrdered,
+  Mic,
   PanelRight,
+  PhoneOff,
   ShieldCheck,
   Trash2,
   UserPlus,
@@ -12,6 +14,7 @@ import {
 } from 'lucide-react';
 import { scopeKey, useRoom, useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
+import { useVoiceRoom } from '@/state/voiceRoom';
 import { useUi } from '@/state/ui';
 import { Button, EmptyState, IconButton, Pill, Spinner } from '@/components/ui';
 import { Menu } from '@/components/Menu';
@@ -32,9 +35,17 @@ export function RoomView({ roomId }: { roomId: string }) {
   const toggleContext = useUi((state) => state.toggleContext);
   const contextOpen = useUi((state) => state.contextOpen);
   const online = useNetwork((state) => state.status === 'online');
+  const serverMembers = useNetwork((state) => state.members[roomId]);
   const messageCount = useWorkspace(
     (state) => state.messages[scopeKey('room', roomId)]?.length ?? 0,
   );
+  const inVoice = useVoiceRoom((state) => state.roomId === roomId);
+  const voiceStatus = useVoiceRoom((state) => (state.roomId === roomId ? state.status : 'idle'));
+  const voiceCount = useVoiceRoom((state) =>
+    state.roomId === roomId ? Object.keys(state.participants).length + 1 : 0,
+  );
+  const joinVoice = useVoiceRoom((state) => state.join);
+  const leaveVoice = useVoiceRoom((state) => state.leave);
 
   useEffect(() => {
     setTab('chat');
@@ -78,13 +89,24 @@ export function RoomView({ roomId }: { roomId: string }) {
         <div className="md-room__heading">
           <h1 className="md-room__title">
             {room.name}
-            <span className="md-room__livedot" data-live="false" title="No live session" />
+            <span
+              className="md-room__livedot"
+              data-live={voiceCount > 0}
+              title={voiceCount > 0 ? `${voiceCount} in voice` : 'No one is in voice'}
+            />
           </h1>
           <p className="md-room__meta">
-            1 member<span aria-hidden="true">·</span>
+            {(serverMembers?.length ?? 1)} {(serverMembers?.length ?? 1) === 1 ? 'member' : 'members'}
+            <span aria-hidden="true">·</span>
             {room.kind === 'game' ? 'Gaming' : 'Voice'}
             <span aria-hidden="true">·</span>
             {room.gameTitle ?? 'No game selected'}
+            {voiceCount > 0 ? (
+              <>
+                <span aria-hidden="true">·</span>
+                {voiceCount} in voice
+              </>
+            ) : null}
           </p>
         </div>
 
@@ -94,6 +116,36 @@ export function RoomView({ roomId }: { roomId: string }) {
               <PanelRight size={16} />
             </IconButton>
           ) : null}
+          <Button
+            size="sm"
+            variant={inVoice ? 'default' : 'primary'}
+            icon={inVoice ? <PhoneOff size={14} /> : <Mic size={14} />}
+            disabled={!inVoice && (!serverMembers || !online)}
+            title={
+              inVoice
+                ? 'Leave this room\u2019s voice channel'
+                : serverMembers
+                  ? online
+                    ? 'Join this room\u2019s voice channel'
+                    : 'Reconnect to your server to use voice'
+                  : 'Voice needs a server room — sign in and create or join one'
+            }
+            onClick={() => {
+              if (inVoice) {
+                leaveVoice();
+              } else {
+                void joinVoice(room.id);
+              }
+            }}
+          >
+            {inVoice
+              ? voiceStatus === 'reconnecting'
+                ? 'Reconnecting…'
+                : voiceStatus === 'joining'
+                  ? 'Connecting…'
+                  : 'Leave voice'
+              : 'Join voice'}
+          </Button>
           <Button variant="primary" size="sm" icon={<UserPlus size={14} />} onClick={() => void copyInvite()}>
             Invite
           </Button>

@@ -11,15 +11,39 @@ import { SignalingService, type SocketData } from './app';
      MELDRIFT_DATA   default ./data/meldrift.db
      MELDRIFT_TRUST_PROXY   set 1 only behind a proxy you control, so
                             X-Forwarded-For is used for rate limiting
+
+   Voice (M3) ICE configuration, advertised to signed-in clients only:
+     MELDRIFT_STUN_URLS     comma-separated stun:/stuns: URLs
+                            default stun:stun.l.google.com:19302
+     MELDRIFT_TURN_URLS     comma-separated turn:/turns: URLs (none by default)
+     MELDRIFT_TURN_USERNAME TURN username (pair with a credential)
+     MELDRIFT_TURN_CREDENTIAL TURN password or static-auth-secret credential
+
+   Without TURN, two peers behind symmetric NATs cannot connect. Relaying is
+   the operator's cost; see docs/VOICE.md.
    -------------------------------------------------------------------------- */
 
 const port = Number(process.env.MELDRIFT_PORT ?? 8787);
 const hostname = process.env.MELDRIFT_HOST ?? '127.0.0.1';
 const dataPath = resolve(process.env.MELDRIFT_DATA ?? './data/meldrift.db');
 
+function urlList(value: string | undefined): string[] | undefined {
+  const list = value
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return list && list.length > 0 ? list : undefined;
+}
+
 mkdirSync(dirname(dataPath), { recursive: true });
 const service = new SignalingService(dataPath, {
   trustProxy: process.env.MELDRIFT_TRUST_PROXY === '1',
+  voice: {
+    stunUrls: urlList(process.env.MELDRIFT_STUN_URLS),
+    turnUrls: urlList(process.env.MELDRIFT_TURN_URLS),
+    turnUsername: process.env.MELDRIFT_TURN_USERNAME || undefined,
+    turnCredential: process.env.MELDRIFT_TURN_CREDENTIAL || undefined,
+  },
 });
 
 const server = Bun.serve<SocketData>({ 

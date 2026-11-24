@@ -1,8 +1,8 @@
-# Networking (M2)
+# Networking (M2) and voice signaling (M3)
 
 Meldrift is local-first. Signed out, every room, message and friend lives in
 SQLite on that PC. Signing in switches the workspace to a **signaling service**
-you run yourself, so rooms and chat are shared with other PCs.
+you run yourself, so rooms, chat and room voice are shared with other PCs.
 
 ## What the service is
 
@@ -14,6 +14,9 @@ you run yourself, so rooms and chat are shared with other PCs.
 - Friends: request, accept, remove. DMs require an accepted friendship.
 - Presence for friends and people who share a room. Nobody else sees it.
 - WebSocket fan-out with per-message acknowledgement and heartbeats.
+- Voice channels: in-memory voice membership per room, authorization for every
+  signal, SDP/ICE relay between channel members only, and authenticated ICE
+  (STUN/TURN) configuration. Audio never passes through the service.
 
 ```
 bun install --cwd server
@@ -35,7 +38,8 @@ a protocol change breaks the build on whichever side was not updated.
 | `GET /api/messages?scopeType=&scopeId=` | History for a room or conversation |
 | `POST /api/friends`, `/accept`, `DELETE /api/friends/:id` | Friend lifecycle |
 | `GET /api/dm/:peerId` | Get or create a conversation with a friend |
-| `WS /ws?token=…` | `message.send` → `message.ack` / `message.new`, presence, membership |
+| `GET /api/voice/ice` | Signed-in only: STUN/TURN servers and the voice cap |
+| `WS /ws?token=…` | `message.send` → `message.ack` / `message.new`, presence, membership, voice signaling |
 
 The browser cannot set headers on a WebSocket, so the session token travels in
 the query string for that one handshake. The service also accepts
@@ -69,6 +73,33 @@ use `DataPort` as before. Screens keep talking to the same store.
   the socket and reloads the local workspace. Local data is never deleted by
   signing in or out.
 
+### Voice signaling (M3)
+
+Voice uses the same socket and session. Membership is authorisation:
+
+- `voice.join` requires persistent room membership, is idempotent (a duplicate
+  join replaces the membership rather than creating a second one), moves the
+  user out of any other voice channel and enforces an eight-participant cap.
+- `voice.state` is accepted only from the socket that owns the current voice
+  membership; it updates and broadcasts mute, deafen and speaking flags.
+- `voice.offer`, `voice.answer` and `voice.ice` are relayed only when both
+  endpoints are currently in the same voice channel on their current sockets.
+  A room member who never joined voice, a stranger, or the sender itself is
+  rejected with `voice.error`.
+- SDP is limited to 60,000 characters, ICE candidates to 2,000, and voice
+  signaling to 240 messages per socket per 10 seconds.
+- Voice membership is in-memory and is removed on socket close, on `voice.leave`
+  and when joining a different room's channel.
+- `GET /api/voice/ice` returns configuration only to authenticated clients, so a
+  TURN credential is never public.
+
+On reconnect the client re-sends `voice.join`, rebuilds peers for the returned
+roster and re-offers; the server has already lost the old membership when the
+socket closed, so there is no stale participant. The dock reports
+`Reconnecting…` until real peer connections are connected again.
+
+See `docs/VOICE.md` for the full flow, NAT/TURN setup and costs.
+
 ## Security posture (alpha)
 
 - Serve the service behind HTTPS before exposing it. Tokens are bearer
@@ -83,7 +114,12 @@ use `DataPort` as before. Screens keep talking to the same store.
   rest) for this alpha. Windows DPAPI wrapping is planned before beta.
 - Authorization is enforced server-side: message reads and writes check room
   membership or conversation membership; DMs require friendship; presence is
-  only broadcast to friends and room mates.
+  only broadcast to friends and room mates; voice signals require room
+  membership plus current voice membership on the sending socket, and are only
+  relayed to other members of the same voice channel.
+- TURN credentials are served only to signed-in clients through
+  `GET /api/voice/ice`; they are not in public configuration or logs. Rotate
+  them by restarting the service with new environment values.
 
 ## Verified
 
@@ -99,9 +135,17 @@ Against a real server on `127.0.0.1:8787` with two browser clients:
 - signing out restores the local room and its history and hides the connection
   chip.
 
-Automated: 10 server integration tests (auth, rate limit, rooms, fan-out,
-membership rejection, DMs, friend gate, presence transitions) and 24 client
-tests, including the address/merge/mapping logic.
+Voice, with two independent native clients on one machine against a fresh
+server: both joined the same voice channel, the later joiner offered and the
+existing participant answered, bidirectional audio was measured on both sides,
+mute stopped transmission, deafen muted playback while RTP continued, leave and
+rejoin left exactly one peer per side, and a server restart was followed by
+`Reconnecting…`, automatic rejoin and audio again.
+
+Automated: 25 server integration tests (auth, rate limit, rooms, fan-out,
+membership rejection, DMs, friend gate, presence transitions, and 15 voice
+authorization/routing/limit/cleanup cases) and 37 client tests, including the
+address/merge/mapping and voice mesh logic.
 
 ## Limits in this milestone
 
@@ -115,3 +159,12 @@ tests, including the address/merge/mapping logic.
 - One session per device; signing in on a second device does not revoke the
   first (each session token is independent and can be revoked by signing out).
 - The service does not terminate TLS itself. Use Caddy, nginx or a tunnel.
+- Voice is a mesh capped at eight people. The service relays signaling only; it
+  is not an SFU and does not carry audio.
+- No TURN server is bundled. The default STUN server covers friendly NATs only;
+  strict NATs and restrictive firewalls need a TURN relay you host. See
+  `docs/VOICE.md` for coturn, ports and bandwidth.
+- Voice membership is live-only in memory; a server restart drops it and clients
+  rejoin automatically.
+- Two-machine, physical-microphone listening has not been tested; the native
+  verification used synthetic tone input through the real capture path.

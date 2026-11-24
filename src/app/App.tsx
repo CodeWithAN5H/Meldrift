@@ -4,7 +4,7 @@ import { useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
 import { useUi, type View } from '@/state/ui';
 import { useVoice } from '@/state/voice';
-import { voiceEngine } from '@/lib/voice';
+import { useVoiceRoom } from '@/state/voiceRoom';
 import { isTauri } from '@/lib/ipc';
 import { MeldriftMark } from '@/icons/MeldriftMark';
 import { Spinner } from '@/components/ui';
@@ -136,6 +136,12 @@ function useGlobalShortcuts() {
       }
       if (mod && event.shiftKey && event.key.toLowerCase() === 'm') {
         event.preventDefault();
+        const room = useVoiceRoom.getState();
+        if (room.roomId) {
+          room.toggleMuted();
+          ui.pushToast(room.muted ? 'Microphone muted' : 'Microphone unmuted');
+          return;
+        }
         const voice = useVoice.getState();
         voice.setMicEnabled(!voice.micEnabled);
         ui.pushToast(voice.micEnabled ? 'Microphone muted' : 'Microphone unmuted');
@@ -143,6 +149,11 @@ function useGlobalShortcuts() {
       }
       if (mod && event.key.toLowerCase() === 'd') {
         event.preventDefault();
+        const room = useVoiceRoom.getState();
+        if (room.roomId) {
+          room.toggleDeafened();
+          return;
+        }
         const voice = useVoice.getState();
         voice.setDeafened(!voice.deafened);
         return;
@@ -202,6 +213,8 @@ function usePushToTalk() {
 
   useEffect(() => {
     const live = micEnabled && (!pushToTalk || held);
-    voiceEngine.setMuted(!live);
+    // Routes through the voice store so peers and the server learn about the
+    // change, not just the local audio graph.
+    useVoiceRoom.getState().applyTransmit(live);
   }, [micEnabled, held, pushToTalk]);
 }

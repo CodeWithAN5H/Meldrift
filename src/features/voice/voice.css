@@ -304,6 +304,92 @@
   box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.14);
 }
 
+.md-dock__status-dot[data-state="live"] {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.16);
+}
+
+.md-dock__status-dot[data-state="warn"] {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(217, 131, 36, 0.16);
+}
+
+.md-dock__status-dot[data-state="error"] {
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(242, 85, 95, 0.16);
+}
+
+/* ---- Voice participants (context panel) -------------------------------- */
+
+.md-voicepeople {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-voiceperson {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.md-voiceperson__avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--r-pill);
+}
+
+.md-voiceperson__avatar::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  border: 1.5px solid transparent;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.md-voiceperson[data-speaking="true"] .md-voiceperson__avatar::after {
+  border-color: var(--green);
+  box-shadow: 0 0 10px -2px rgba(61, 220, 151, 0.5);
+}
+
+.md-voiceperson__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.md-voiceperson__name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-voiceperson__meta {
+  font-size: var(--fs-micro);
+  color: var(--text-tertiary);
+}
+
+.md-voiceperson__icons {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.md-voiceperson[data-speaking="true"] .md-voiceperson__icons {
+  color: var(--green);
+}
+
 .md-dock-aside {
   position: fixed;
   right: 16px;

@@ -34,7 +34,7 @@ export function MicTestModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal
       title="Microphone check"
-      subtitle="Local monitoring only — nothing is transmitted yet."
+      subtitle="Local monitoring. Unmuted audio is sent only while you are in a room's voice channel."
       onClose={onClose}
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -130,8 +130,8 @@ export function MicTestModal({ onClose }: { onClose: () => void }) {
       </div>
 
       <p className="md-hint">
-        Device changes apply the next time the microphone starts. Voice channels and
-        peer audio arrive in M3.
+        Device changes apply immediately while you are in voice. Incoming voice is
+        played through your chosen speaker; use the dock to mute or deafen.
       </p>
     </Modal>
   );

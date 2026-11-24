@@ -9,6 +9,7 @@ import type {
   PublicUser,
   RegisterBody,
   RoomView,
+  VoiceConfigView,
 } from '@shared/protocol';
 
 /* --------------------------------------------------------------------------
@@ -133,6 +134,9 @@ export const signalingApi = {
 
   bootstrap: (serverUrl: string, token: string) =>
     request<BootstrapView>(serverUrl, '/api/bootstrap', { token }),
+
+  voiceConfig: (serverUrl: string, token: string) =>
+    request<VoiceConfigView>(serverUrl, '/api/voice/ice', { token }),
 
   createRoom: (
     serverUrl: string,

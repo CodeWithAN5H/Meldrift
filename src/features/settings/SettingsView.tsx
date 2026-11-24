@@ -485,7 +485,7 @@ function AudioSection() {
           </div>
         </Row>
 
-        <Row title="Input level" hint="Applied live to the microphone graph.">
+        <Row title="Input level" hint="Applied to the audio other players hear, not just your meter.">
           <div className="md-inline md-inline--grow">
             <Slider
               min={0}
@@ -516,8 +516,8 @@ function AudioSection() {
           </div>
           <MicLevel passive={!capturing} />
           <p className="md-hint">
-            This measures your microphone locally. It is not sent anywhere until voice
-            rooms ship in M3.
+            This check is local. While you are in a room's voice channel, unmuted audio
+            is sent to the other members over WebRTC; this check does not transmit.
           </p>
         </div>
 
@@ -563,7 +563,7 @@ function AudioSection() {
       </Group>
 
       <Group title="Speaker">
-        <Row title="Output device" hint="Saved for voice playback when channels ship.">
+        <Row title="Output device" hint="Incoming voice plays through this speaker when supported.">
           <select
             className="md-select"
             value={settings.speakerDeviceId}
@@ -589,6 +589,72 @@ function AudioSection() {
             <span className="md-value">{settings.outputVolume}%</span>
           </div>
         </Row>
+      </Group>
+
+      <Group title="Voice network">
+        <p className="md-note">
+          Voice is peer-to-peer. STUN discovers addresses; a TURN server relays audio
+          when both peers are behind restrictive NATs. Empty fields use the
+          configuration your signaling server advertises. A relay carries roughly
+          40 kbps per listener each way, so hosting has a real bandwidth cost — see{' '}
+          <strong>docs/VOICE.md</strong>.
+        </p>
+
+        <Field
+          label="STUN servers"
+          htmlFor="voice-stun"
+          hint="Comma-separated stun: URLs. Leave empty to use the server default."
+        >
+          <input
+            id="voice-stun"
+            className="md-input"
+            value={settings.voiceStunUrl}
+            placeholder="stun:stun.l.google.com:19302"
+            spellCheck={false}
+            onChange={(event) => void updateSettings({ voiceStunUrl: event.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="TURN server"
+          htmlFor="voice-turn"
+          hint="Comma-separated turn: URLs. Required for peers that cannot connect directly."
+        >
+          <input
+            id="voice-turn"
+            className="md-input"
+            value={settings.voiceTurnUrl}
+            placeholder="turn:turn.example.com:3478?transport=udp"
+            spellCheck={false}
+            onChange={(event) => void updateSettings({ voiceTurnUrl: event.target.value })}
+          />
+        </Field>
+
+        <Field label="TURN username" htmlFor="voice-turn-user">
+          <input
+            id="voice-turn-user"
+            className="md-input"
+            value={settings.voiceTurnUsername}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => void updateSettings({ voiceTurnUsername: event.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="TURN credential"
+          htmlFor="voice-turn-credential"
+          hint="Stored in this PC's local database, like your session token. Never logged."
+        >
+          <input
+            id="voice-turn-credential"
+            className="md-input"
+            type="password"
+            value={settings.voiceTurnCredential}
+            autoComplete="off"
+            onChange={(event) => void updateSettings({ voiceTurnCredential: event.target.value })}
+          />
+        </Field>
       </Group>
     </>
   );

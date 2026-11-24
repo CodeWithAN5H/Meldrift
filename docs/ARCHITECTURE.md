@@ -1,6 +1,7 @@
 # Meldrift architecture
 
-Status: `0.2.0-alpha.1` (M0, M1 and the M2 networking foundation complete).
+Status: `0.3.0-alpha.1` (M0–M3 complete: foundation, permanent UI, the M2
+networking foundation and M3 real-time voice).
 
 ## Stack decisions
 
@@ -13,6 +14,7 @@ Status: `0.2.0-alpha.1` (M0, M1 and the M2 networking foundation complete).
 | Icons | **Lucide** | Tree-shaken SVG set; the brand mark is a local SVG. |
 | Persistence | **SQLite via rusqlite (bundled)** | Real relational data, WAL for non-blocking reads, no external database. |
 | Networking | **Bun + bun:sqlite + WebSocket** | One compiled binary, no Node/native build step, self-hostable; the same TypeScript protocol file is imported by the client. |
+| Voice | **WebRTC in WebView2 (Chromium)** | A maintained WebRTC stack with Opus, ICE, DTLS-SRTP, echo cancellation (AEC3), noise suppression and gain control already inside the WebView2 runtime. No extra native audio/WebRTC dependency, no second process, and the same code path on every Windows machine. See `docs/VOICE.md` for why not `webrtc-rs` + a native audio stack. |
 | Tests | **Vitest** + Rust `#[cfg(test)]` | Fast unit/integration coverage on both sides of the IPC boundary. |
 
 Deviations from the preferred stack: none. The only additions are Zustand (state
@@ -44,10 +46,14 @@ src/
   lib/net/map.ts           Pure wire ↔ UI mapping, message merging
   lib/net/hub.ts           Remote adapter seam used by the workspace store
   lib/voice.ts             Microphone capture graph + analyser metering
+  lib/voice/model.ts       ICE parsing, speaking hysteresis, status derivation
+  lib/voice/session.ts     WebRTC mesh: offers, answers, ICE, restart, cleanup
+  lib/voice/transport.ts   Signaling seam installed by the network store
   state/workspace.ts       Domain state and actions (local or server-backed)
   state/network.ts         Session, connection status, presence, requests
   state/ui.ts              Navigation, modals, toasts (never persisted)
   state/voice.ts           Capture state machine
+  state/voiceRoom.ts       Voice session, participants, mute/deafen/PTT
   design/                  Tokens, base layer, primitives CSS
   components/              Button, Avatar, Modal, VirtualList, Menu, …
   app/                     Shell grid, title bar, rail, toasts, shortcuts
@@ -107,6 +113,57 @@ membership are pushed as events and applied to both stores.
 
 See `docs/NETWORKING.md` for the endpoint table and protocol behaviour.
 
+## Voice (M3)
+
+Voice is a peer-to-peer mesh on top of the same authenticated WebSocket. The
+signaling service does not carry audio; it only authorises and relays SDP and
+ICE between people who are already in the same voice channel.
+
+```
+mic → getUserMedia → gain → analyser (meter) ─┐
+                                     └→ MediaStreamDestination → RTCPeerConnection (Opus) → peer
+peer → RTCPeerConnection → <audio> element + analyser (remote speaking level)
+```
+
+- **Why the WebView.** WebView2 is Chromium: WebRTC, Opus, ICE and DTLS-SRTP are
+  already there, including platform-tuned AEC3, noise suppression, automatic
+  gain control and jitter buffering. A Rust implementation using `webrtc-rs`
+  plus `cpal` and a separate echo-cancellation library would add native threads,
+  device hot-plug handling inside the process and a second WebRTC stack to keep
+  current — significant risk for no audio-quality gain. Capture also stays off
+  the UI thread inside Chromium's media pipeline.
+- **Codec settings.** Opus, mono, 48 kHz, `maxBitrate = 48 kbps` per stream and
+  DTX so silence costs almost nothing. Echo cancellation, noise suppression and
+  AGC are requested through `getUserMedia` from user settings; no additional
+  competing noise-suppression layer is applied in JS.
+- **Topology.** One `RTCPeerConnection` per remote participant, capped at eight
+  people by the server. Eight participants means seven upstream Opus streams
+  per client (~340 kbps upstream); beyond that a mesh is the wrong shape and an
+  SFU is required. The cap is enforced server-side, not just in the UI.
+- **Offer direction.** The participant who joins later offers to each person
+  already in the roster; existing participants answer. This removes glare
+  without perfect negotiation, and a duplicate join replaces the existing
+  membership instead of creating a second peer.
+- **Signaling.** `voice.join` / `voice.leave` / `voice.state` from clients;
+  `voice.joined` with the roster, `voice.participant.joined/left/state`,
+  `voice.offer/answer/ice` routed only between two current voice members of the
+  same room. The server validates room membership, both endpoints' voice
+  membership, SDP/candidate sizes and a per-socket signaling rate (240
+  messages / 10 s), and drops all voice state when the socket closes.
+- **Reconnection.** The socket reconnects with capped exponential backoff and
+  jitter. Voice membership is in-memory server state, so the client rejoins on
+  reconnect and rebuilds peers whose signaling session was lost. Existing media
+  can survive a signaling blip briefly; the UI reports `reconnecting` until the
+  media path is connected again.
+- **Truthful state.** `deriveVoiceStatus` combines signaling and every peer's
+  real `RTCPeerConnection.connectionState`; `connected` requires all peers
+  connected. Remote speaking comes from an analyser on the received audio with
+  hysteresis, never from a timer or a random value.
+- **Cleanup.** Leaving, switching rooms, signing out, closing the window and a
+  microphone `ended` event all stop capture, close every peer connection, stop
+  remote audio elements and send `voice.leave`. All peer objects are recreated
+  on join, so repeated joins cannot accumulate connections.
+
 ## Persistence schema
 
 `profile` (single row) · `settings` (single JSON document, sanitised in TS) ·
@@ -129,9 +186,10 @@ Rust (lengths, enum values, scope ownership) and again in TS before submit.
   durations are 110–220 ms and collapse to 0 under reduced motion.
 - **No polling.** The analyser loop stops when capture stops, and a connected
   client sends one heartbeat every 25 s rather than polling for updates.
-- **Isolation for future media.** Streaming and voice will live outside React's
-  render path: capture and encoding in Rust/worker threads, decoded video on its
-  own `<video>` surface, UI in the WebView. A chat message can never block a frame.
+- **Voice off the render path.** Audio capture, Opus, echo cancellation and
+  jitter buffering run inside Chromium's media pipeline; only a 120 ms analyser
+  tick and a 250 ms speaking-state throttle touch the client stores. Chat and
+  panel updates cannot block encoding or playback. `getStats` is not polled.
 - **Measured, not claimed.** Idle CPU/memory numbers will be recorded in
   `docs/STATUS.md` once profiling hardware runs are captured; none are asserted
   yet.
@@ -142,6 +200,11 @@ Rust (lengths, enum values, scope ownership) and again in TS before submit.
   dragging, double-click to maximise via the native toggle.
 - Dark `backgroundColor` plus a `visible: false` window that is shown on page
   load, so there is no white flash.
+- WebView2 asks for microphone permission on the first join; denying it is
+  handled as a real capture error (voice is not joined, and the app says the
+  microphone is unavailable). The prompt is per WebView2 profile.
+- Output selection uses `HTMLAudioElement.setSinkId` where WebView2 exposes it;
+  otherwise the system default is used and the UI keeps the stored choice.
 - CSP restricts scripts to self; media is limited to `self`, `blob:` and
   `mediastream:`. Connections allow `http:`/`https:`/`ws:`/`wss:` because the
   signaling server address is user-configured; that is the documented trade-off

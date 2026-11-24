@@ -3,6 +3,11 @@ import type { Server, ServerWebSocket } from 'bun';
 import {
   MAX_MESSAGE_LENGTH,
   PROTOCOL_VERSION,
+  VOICE_MAX_CANDIDATE_LENGTH,
+  VOICE_MAX_PARTICIPANTS,
+  VOICE_MAX_SDP_LENGTH,
+  VOICE_SIGNAL_BURST,
+  VOICE_SIGNAL_WINDOW_MS,
   isValidPresence,
   normalizeUsername,
   type BootstrapView,
@@ -20,6 +25,9 @@ import {
   type RoomMemberView,
   type RoomView,
   type ServerEvent,
+  type VoiceConfigView,
+  type VoiceIceCandidate,
+  type VoiceParticipantView,
 } from '../../shared/protocol';
 import { AuthError, createSession, hashPassword, revokeSession, toPublicUser, tokenFromRequest, userForToken, validateCredentials, verifyPassword } from './auth';
 import { makeInviteCode, openDatabase, orderedPair, type MessageRow, type RoomRow, type UserRow } from './db';
@@ -27,8 +35,37 @@ import { makeInviteCode, openDatabase, orderedPair, type MessageRow, type RoomRo
 export interface SocketData {
   userId: string;
   presence: 'online' | 'idle';
+  /** Identifies this connection, so a stale socket cannot tear down a newer one. */
+  socketId: number;
   /** Timestamps of recent messages, used for a light flood guard. */
   recent: number[];
+  /** Timestamps of recent voice signals (SDP/ICE). */
+  voiceRecent: number[];
+}
+
+export interface VoiceOptions {
+  /** stun:/stuns: URLs advertised to clients. */
+  stunUrls?: string[];
+  /** turn:/turns: URLs; credentials are only sent to signed-in clients. */
+  turnUrls?: string[];
+  turnUsername?: string;
+  turnCredential?: string;
+}
+
+interface VoiceMember {
+  participant: VoiceParticipantView;
+  /** The socket that joined; a reconnect replaces it rather than duplicating. */
+  socketId: number;
+}
+
+const DEFAULT_STUN_URLS = ['stun:stun.l.google.com:19302'];
+
+/** Only STUN/TURN schemes are meaningful, and a bad URL must not break calling. */
+function validIceUrls(values: string[] | undefined): string[] {
+  if (!values) return [];
+  return values
+    .map((value) => value.trim())
+    .filter((value) => /^(stun|stuns|turn|turns):[^\s]+$/i.test(value));
 }
 
 interface AuthedSocket extends ServerWebSocket<SocketData> {}
@@ -51,6 +88,8 @@ export interface ServiceOptions {
   authWindowMs?: number;
   /** Only enable behind a reverse proxy you control: trusts X-Forwarded-For. */
   trustProxy?: boolean;
+  /** STUN/TURN configuration advertised through GET /api/voice/ice. */
+  voice?: VoiceOptions;
 }
 
 function asUser(row: UserRow): PublicUser {
@@ -61,6 +100,9 @@ export class SignalingService {
   readonly db: Database;
   private sockets = new Map<string, Set<AuthedSocket>>();
   private authAttempts = new Map<string, { count: number; resetAt: number }>();
+  /** roomId → userId → voice membership. Voice is live state, never persisted. */
+  private voiceRooms = new Map<string, Map<string, VoiceMember>>();
+  private nextSocketId = 1;
 
   constructor(
     readonly dbPath: string,
@@ -109,7 +151,13 @@ export class SignalingService {
       const user = userForToken(this.db, token);
       if (!user) return this.fail('Sign in required', 401, origin);
       const upgraded = server.upgrade(request, {
-        data: { userId: user.id, presence: 'online', recent: [] },
+        data: {
+          userId: user.id,
+          presence: 'online',
+          socketId: this.nextSocketId++,
+          recent: [],
+          voiceRecent: [],
+        },
       });
       return upgraded ? undefined : this.fail('WebSocket upgrade failed', 400, origin);
     }
@@ -156,6 +204,9 @@ export class SignalingService {
 
     if (method === 'GET' && path === '/api/bootstrap') {
       return this.json(this.bootstrap(user), 200, origin);
+    }
+    if (method === 'GET' && path === '/api/voice/ice') {
+      return this.json(this.voiceConfig(), 200, origin);
     }
     if (method === 'POST' && path === '/api/rooms') {
       return this.createRoom(request, user, origin);
@@ -660,6 +711,237 @@ export class SignalingService {
     return this.json({ conversationId: row.id }, 200, origin);
   }
 
+  /* ---- Voice ----------------------------------------------------------- */
+
+  /**
+   * Advertised ICE servers. Signed-in clients only: a TURN credential is a
+   * relay credential, so it is never served without authentication. Self-hosters
+   * can rotate it by restarting the service with new environment variables.
+   */
+  voiceConfig(): VoiceConfigView {
+    const stun = validIceUrls(this.options.voice?.stunUrls);
+    const turn = validIceUrls(this.options.voice?.turnUrls);
+    const iceServers: VoiceConfigView['iceServers'] = [];
+    iceServers.push({ urls: stun.length > 0 ? stun : DEFAULT_STUN_URLS });
+    if (turn.length > 0) {
+      iceServers.push({
+        urls: turn,
+        ...(this.options.voice?.turnUsername ? { username: this.options.voice.turnUsername } : {}),
+        ...(this.options.voice?.turnCredential
+          ? { credential: this.options.voice.turnCredential }
+          : {}),
+      });
+    }
+    return { iceServers, maxParticipants: VOICE_MAX_PARTICIPANTS };
+  }
+
+  /**
+   * Joining is idempotent. Re-joining after a socket reconnect replaces the
+   * membership instead of creating a second one, and joining a different room
+   * leaves the previous voice channel first.
+   */
+  private handleVoiceJoin(socket: AuthedSocket, roomId: string): void {
+    const userId = socket.data.userId;
+    if (!roomId || roomId.length > 64) {
+      this.send(socket, { t: 'voice.error', error: 'Unknown room' });
+      return;
+    }
+    const room = this.db.query('SELECT id FROM rooms WHERE id = ?').get(roomId);
+    if (!room) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'Room not found' });
+      return;
+    }
+    if (!this.isRoomMember(userId, roomId)) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'You are not a member of this room' });
+      return;
+    }
+
+    for (const [otherRoom, members] of this.voiceRooms) {
+      if (otherRoom === roomId) continue;
+      const member = members.get(userId);
+      if (member && member.socketId === socket.data.socketId) {
+        this.removeVoiceMember(otherRoom, userId);
+      }
+    }
+
+    let members = this.voiceRooms.get(roomId);
+    if (!members) {
+      members = new Map<string, VoiceMember>();
+      this.voiceRooms.set(roomId, members);
+    }
+
+    const existing = members.get(userId);
+    const user = this.db.query('SELECT * FROM users WHERE id = ?').get(userId) as UserRow;
+    if (!existing && members.size >= VOICE_MAX_PARTICIPANTS) {
+      this.send(socket, {
+        t: 'voice.error',
+        roomId,
+        error: `Voice channels hold ${VOICE_MAX_PARTICIPANTS} people in this build`,
+      });
+      return;
+    }
+
+    const participant: VoiceParticipantView = existing
+      ? { ...existing.participant, joinedAt: existing.participant.joinedAt }
+      : {
+          userId,
+          displayName: user.display_name,
+          avatarColor: user.avatar_color,
+          muted: false,
+          deafened: false,
+          speaking: false,
+          joinedAt: Date.now(),
+        };
+    members.set(userId, { participant, socketId: socket.data.socketId });
+
+    const roster = [...members.values()]
+      .map((member) => member.participant)
+      .filter((item) => item.userId !== userId);
+    this.send(socket, { t: 'voice.joined', roomId, selfId: userId, participants: roster });
+
+    if (!existing) {
+      this.broadcastToRoom(
+        roomId,
+        { t: 'voice.participant.joined', roomId, participant },
+        userId,
+      );
+    }
+  }
+
+  private handleVoiceLeave(socket: AuthedSocket, roomId: string): void {
+    const removed = this.removeVoiceMember(roomId, socket.data.userId, socket);
+    if (!removed) this.send(socket, { t: 'voice.left', roomId });
+  }
+
+  private removeVoiceMember(
+    roomId: string,
+    userId: string,
+    origin?: AuthedSocket,
+  ): VoiceParticipantView | null {
+    const members = this.voiceRooms.get(roomId);
+    const member = members?.get(userId);
+    if (!members || !member) return null;
+    members.delete(userId);
+    if (members.size === 0) this.voiceRooms.delete(roomId);
+    if (origin) this.send(origin, { t: 'voice.left', roomId });
+    this.broadcastToRoom(roomId, { t: 'voice.participant.left', roomId, userId }, userId);
+    return member.participant;
+  }
+
+  private handleVoiceState(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'voice.state' }>,
+  ): void {
+    const roomId = String(event.roomId ?? '');
+    const members = this.voiceRooms.get(roomId);
+    const member = members?.get(socket.data.userId);
+    if (!members || !member || member.socketId !== socket.data.socketId) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'Join voice first' });
+      return;
+    }
+    const participant: VoiceParticipantView = {
+      ...member.participant,
+      muted: event.muted === true,
+      deafened: event.deafened === true,
+      speaking: event.speaking === true,
+    };
+    member.participant = participant;
+    this.broadcastToRoom(
+      roomId,
+      {
+        t: 'voice.participant.state',
+        roomId,
+        userId: participant.userId,
+        muted: participant.muted,
+        deafened: participant.deafened,
+        speaking: participant.speaking,
+      },
+      participant.userId,
+    );
+  }
+
+  /**
+   * SDP and ICE are only relayed between two people who are currently in the
+   * same voice channel. Membership alone is not enough: a room member who never
+   * joined voice cannot be signalled, and a stranger cannot signal anyone.
+   */
+  private handleVoiceSignal(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'voice.offer' | 'voice.answer' | 'voice.ice' }>,
+  ): void {
+    const now = Date.now();
+    socket.data.voiceRecent = socket.data.voiceRecent.filter(
+      (stamp) => now - stamp < VOICE_SIGNAL_WINDOW_MS,
+    );
+    if (socket.data.voiceRecent.length >= VOICE_SIGNAL_BURST) {
+      this.send(socket, {
+        t: 'voice.error',
+        roomId: String(event.roomId ?? '') || undefined,
+        error: 'Voice signalling is too fast; slow down',
+      });
+      return;
+    }
+
+    const roomId = String(event.roomId ?? '');
+    const to = String(event.to ?? '');
+    if (!roomId || roomId.length > 64 || !to || to.length > 64 || to === socket.data.userId) {
+      this.send(socket, { t: 'voice.error', roomId: roomId || undefined, error: 'Invalid voice target' });
+      return;
+    }
+
+    const members = this.voiceRooms.get(roomId);
+    const self = members?.get(socket.data.userId);
+    const target = members?.get(to);
+    if (!self || self.socketId !== socket.data.socketId) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'Join voice first' });
+      return;
+    }
+    if (!target) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'That player is not in this voice channel' });
+      return;
+    }
+
+    if (event.t === 'voice.ice') {
+      const candidate = event.candidate as VoiceIceCandidate | undefined;
+      if (
+        !candidate ||
+        typeof candidate.candidate !== 'string' ||
+        candidate.candidate.length > VOICE_MAX_CANDIDATE_LENGTH ||
+        (candidate.sdpMid != null && typeof candidate.sdpMid !== 'string') ||
+        (candidate.sdpMLineIndex != null && typeof candidate.sdpMLineIndex !== 'number')
+      ) {
+        this.send(socket, { t: 'voice.error', roomId, error: 'Invalid ICE candidate' });
+        return;
+      }
+      socket.data.voiceRecent.push(now);
+      this.sendTo(to, {
+        t: 'voice.ice',
+        roomId,
+        from: socket.data.userId,
+        candidate: {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid ?? null,
+          sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+          usernameFragment: candidate.usernameFragment ?? null,
+        },
+      });
+      return;
+    }
+
+    const sdp = event.sdp;
+    if (typeof sdp !== 'string' || sdp.length === 0 || sdp.length > VOICE_MAX_SDP_LENGTH) {
+      this.send(socket, { t: 'voice.error', roomId, error: 'Invalid session description' });
+      return;
+    }
+    socket.data.voiceRecent.push(now);
+    this.sendTo(to, {
+      t: event.t,
+      roomId,
+      from: socket.data.userId,
+      sdp,
+    });
+  }
+
   /* ---- Presence -------------------------------------------------------- */
 
   presenceOf(userId: string): Presence {
@@ -717,6 +999,14 @@ export class SignalingService {
   }
 
   onClose(socket: AuthedSocket): void {
+    // Voice is live state: a closed socket must never leave a ghost participant.
+    for (const [roomId, members] of [...this.voiceRooms]) {
+      const member = members.get(socket.data.userId);
+      if (member && member.socketId === socket.data.socketId) {
+        this.removeVoiceMember(roomId, socket.data.userId);
+      }
+    }
+
     const set = this.sockets.get(socket.data.userId);
     if (!set) return;
     set.delete(socket);
@@ -748,6 +1038,20 @@ export class SignalingService {
       }
       case 'message.send':
         this.handleSend(socket, event);
+        return;
+      case 'voice.join':
+        this.handleVoiceJoin(socket, String(event.roomId ?? ''));
+        return;
+      case 'voice.leave':
+        this.handleVoiceLeave(socket, String(event.roomId ?? ''));
+        return;
+      case 'voice.state':
+        this.handleVoiceState(socket, event);
+        return;
+      case 'voice.offer':
+      case 'voice.answer':
+      case 'voice.ice':
+        this.handleVoiceSignal(socket, event);
         return;
       default:
         this.send(socket, { t: 'error', message: 'Unknown event' });
@@ -842,8 +1146,11 @@ export class SignalingService {
     for (const id of this.audienceFor(userId)) this.sendTo(id, event);
   }
 
-  private broadcastToRoom(roomId: string, event: ServerEvent): void {
-    for (const userId of this.roomAudience(roomId)) this.sendTo(userId, event);
+  private broadcastToRoom(roomId: string, event: ServerEvent, excludeUserId?: string): void {
+    for (const userId of this.roomAudience(roomId)) {
+      if (userId === excludeUserId) continue;
+      this.sendTo(userId, event);
+    }
   }
 
   private sendTo(userId: string, event: ServerEvent): void {

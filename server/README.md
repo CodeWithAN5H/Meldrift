@@ -1,7 +1,8 @@
 # Meldrift signaling service
 
-The service that makes rooms, presence, friends and chat work between PCs. It is
-a single Bun binary with one SQLite file, designed to be self-hosted.
+The service that makes rooms, presence, friends, chat and room voice work
+between PCs. It is a single Bun binary with one SQLite file, designed to be
+self-hosted.
 
 ```
 bun install
@@ -14,6 +15,10 @@ MELDRIFT_DATA=./data/meldrift.db bun run start     # http://127.0.0.1:8787
 | `MELDRIFT_PORT` | `8787` | Listen port. |
 | `MELDRIFT_DATA` | `./data/meldrift.db` | SQLite file. WAL mode is enabled. |
 | `MELDRIFT_TRUST_PROXY` | off | Set `1` **only** behind a proxy you control, so `X-Forwarded-For` is used for rate limiting. |
+| `MELDRIFT_STUN_URLS` | `stun:stun.l.google.com:19302` | Comma-separated `stun:`/`stuns:` URLs advertised to signed-in clients. |
+| `MELDRIFT_TURN_URLS` | none | Comma-separated `turn:`/`turns:` URLs. |
+| `MELDRIFT_TURN_USERNAME` | none | TURN username paired with the credential. |
+| `MELDRIFT_TURN_CREDENTIAL` | none | TURN password or static-auth-secret credential. |
 
 ## What it does
 
@@ -23,13 +28,34 @@ MELDRIFT_DATA=./data/meldrift.db bun run start     # http://127.0.0.1:8787
 - Friend requests, accept/remove, and presence for friends and people who share
   a room. Nobody else can see you.
 - A WebSocket at `/ws?token=…` for fan-out, acknowledgements and heartbeats.
+- Voice channels (M3): joins/leaves, participant state, and relayed
+  offer/answer/ICE signaling. Every signal is checked against room membership,
+  both endpoints' current voice membership, payload sizes and a per-socket rate
+  limit; the channel cap is eight. Voice membership is in-memory and vanishes
+  with the socket.
+- `GET /api/voice/ice` for authenticated clients only: STUN/TURN configuration
+  and the participant cap. Audio never passes through this service.
 
 ## What it does not do yet
 
-Voice and video (M3), game streaming (M4), remote control (M5), room deletion or
-leaving a room, and file uploads. Message delivery is live-only: if both people
-are offline, the message is stored but pushed to nobody until they reconnect and
-open the conversation.
+Video and game streaming (M4), remote control (M5), room deletion or leaving a
+room, and file uploads. Message delivery is live-only: if both people are
+offline, the message is stored but pushed to nobody until they reconnect and
+open the conversation. No TURN server is bundled — configure one yourself if
+participants may be behind strict NATs.
+
+## Voice relay configuration
+
+```bash
+MELDRIFT_TURN_URLS="turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349" \
+MELDRIFT_TURN_USERNAME="meldrift" \
+MELDRIFT_TURN_CREDENTIAL="change-me" \
+bun run start
+```
+
+Open UDP/TCP 3478 and 5349 and the coturn relay range (for example UDP
+49160–49200). Credentials are only returned to signed-in clients. Full setup,
+ports, bandwidth and cost notes are in `docs/VOICE.md`.
 
 ## Tests
 
@@ -39,7 +65,11 @@ bun test
 
 The suite starts a real HTTP + WebSocket server against an in-memory database and
 covers registration, login, duplicate usernames, room creation and joining,
-fan-out, membership enforcement, DMs, friend requests and presence transitions.
+fan-out, membership enforcement, DMs, friend requests, presence transitions and
+voice (ICE config auth, non-member and unknown-room rejection, duplicate joins,
+offer/answer/ICE routing, invalid and oversized payloads, rate limiting, state
+broadcast, leave/close cleanup, room switch and the participant cap). Currently
+25 tests.
 
 ## Self-hosting notes
 
@@ -50,6 +80,8 @@ fan-out, membership enforcement, DMs, friend requests and presence transitions.
   itself does not terminate TLS.
 - SQLite is enough for a friend group. There is no federation or sharding.
 - Back up `meldrift.db` (plus its `-wal` file) if the messages matter.
+- TURN is the only meaningful running cost for voice; direct peer-to-peer calls
+  use this service for signaling only.
 
 ## Docker
 

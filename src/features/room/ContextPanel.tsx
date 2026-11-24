@@ -3,17 +3,24 @@ import {
   Crown,
   Eye,
   Gamepad2,
+  Headphones,
   ListOrdered,
   Mic,
+  MicOff,
   ShieldCheck,
+  VolumeX,
 } from 'lucide-react';
 import { useRoom, useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
 import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
+import { useVoiceRoom } from '@/state/voiceRoom';
 import { Avatar, IconButton } from '@/components/ui';
+import { describeConnection } from '@/lib/voice/model';
 import { copyText } from '@/lib/clipboard';
 import './room.css';
+
+const EMPTY_PARTICIPANTS: Record<string, never> = {};
 
 export function ContextPanel({ roomId }: { roomId: string }) {
   const room = useRoom(roomId);
@@ -26,7 +33,45 @@ export function ContextPanel({ roomId }: { roomId: string }) {
   const remoteMembers = useNetwork((state) => state.members[roomId]);
   const members = online && remoteMembers && remoteMembers.length > 0 ? remoteMembers : null;
 
+  const inVoice = useVoiceRoom((state) => state.roomId === roomId);
+  const voiceStatus = useVoiceRoom((state) => (state.roomId === roomId ? state.status : 'idle'));
+  const voiceMuted = useVoiceRoom((state) => (state.roomId === roomId ? state.muted : false));
+  const voiceDeafened = useVoiceRoom((state) =>
+    state.roomId === roomId ? state.deafened : false,
+  );
+  const voiceSpeaking = useVoiceRoom((state) => (state.roomId === roomId ? state.speaking : false));
+  const voiceParticipants = useVoiceRoom((state) =>
+    state.roomId === roomId ? state.participants : EMPTY_PARTICIPANTS,
+  );
+  const joinVoice = useVoiceRoom((state) => state.join);
+  const leaveVoice = useVoiceRoom((state) => state.leave);
+
   if (!room || !profile) return null;
+
+  const voiceRows = inVoice
+    ? [
+        {
+          userId: profile.id,
+          displayName: profile.displayName,
+          avatarColor: profile.avatarColor,
+          muted: voiceMuted,
+          deafened: voiceDeafened,
+          speaking: voiceSpeaking,
+          connection: 'connected' as const,
+          you: true,
+        },
+        ...Object.values(voiceParticipants).map((participant) => ({
+          userId: participant.userId,
+          displayName: participant.displayName,
+          avatarColor: participant.avatarColor,
+          muted: participant.muted,
+          deafened: participant.deafened,
+          speaking: participant.audible || participant.speaking,
+          connection: participant.connection,
+          you: false,
+        })),
+      ]
+    : [];
 
   const copyInvite = async () => {
     const ok = await copyText(room.inviteCode);
@@ -100,6 +145,81 @@ export function ContextPanel({ roomId }: { roomId: string }) {
             </p>
           </>
         )}
+      </section>
+
+      <section className="md-card md-context__card">
+        <header className="md-context__head">
+          <h2 className="md-eyebrow">Voice ({voiceRows.length})</h2>
+          {inVoice ? (
+            <button type="button" className="md-context__clear" onClick={() => leaveVoice()}>
+              Leave
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="md-context__clear"
+              disabled={!members}
+              title={members ? 'Join the voice channel' : 'Voice needs a server room'}
+              onClick={() => void joinVoice(room.id)}
+            >
+              Join
+            </button>
+          )}
+        </header>
+
+        {voiceRows.length === 0 ? (
+          <p className="md-context__empty">
+            <Headphones size={14} />
+            No one is in voice. Join to talk with this room.
+          </p>
+        ) : (
+          <ul className="md-voicepeople">
+            {voiceRows.map((row) => (
+              <li
+                key={row.userId}
+                className="md-voiceperson"
+                data-speaking={row.speaking && !row.muted}
+              >
+                <span className="md-voiceperson__avatar">
+                  <Avatar name={row.displayName} color={row.avatarColor} size={30} />
+                </span>
+                <span className="md-voiceperson__body">
+                  <span className="md-voiceperson__name">
+                    {row.displayName}
+                    {row.you ? ' \u00b7 You' : ''}
+                  </span>
+                  <span className="md-voiceperson__meta">
+                    {row.speaking && !row.muted
+                      ? 'Speaking'
+                      : row.muted
+                        ? describeConnection(row.connection) === 'Connected'
+                          ? 'Muted'
+                          : `${describeConnection(row.connection)} \u00b7 Muted`
+                        : describeConnection(row.connection)}
+                    {row.deafened ? ' \u00b7 Deafened' : ''}
+                  </span>
+                </span>
+                <span className="md-voiceperson__icons">
+                  {row.muted ? (
+                    <MicOff size={13} aria-label="Muted" />
+                  ) : (
+                    <Mic size={13} aria-label="Microphone on" />
+                  )}
+                  {row.deafened ? <VolumeX size={13} aria-label="Deafened" /> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <p className="md-context__foot">
+          <ShieldCheck size={12} />
+          {inVoice
+            ? voiceStatus === 'connected'
+              ? 'Peer-to-peer Opus audio · encrypted with DTLS-SRTP'
+              : `Voice ${voiceStatus === 'reconnecting' ? 'reconnecting' : 'connecting'}`
+            : 'Server-checked membership · Opus voice'}
+        </p>
       </section>
 
       <section className="md-spectate">
