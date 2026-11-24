@@ -25,7 +25,12 @@ if (unique.size !== 1) {
   process.exit(1);
 }
 
-const tag = process.env.GITHUB_REF_NAME ?? process.env.MELDRIFT_TAG ?? '';
+// GitHub sets GITHUB_REF_NAME to the branch name on branch pushes and to the
+// tag name only on tag pushes, so compare against the version only for tags.
+const refType = process.env.GITHUB_REF_TYPE;
+const ref = process.env.GITHUB_REF ?? '';
+const isTagRef = refType === 'tag' || (refType === undefined && ref.startsWith('refs/tags/'));
+const tag = isTagRef ? process.env.GITHUB_REF_NAME || ref.replace(/^refs\/tags\//, '') : process.env.MELDRIFT_TAG ?? '';
 if (tag && tag.replace(/^v/, '') !== pkg) {
   console.error(`Tag ${tag} does not match version ${pkg}.`);
   process.exit(1);
