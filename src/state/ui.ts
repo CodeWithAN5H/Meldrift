@@ -16,7 +16,8 @@ export type ModalKind =
   | 'mic-test'
   | 'delete-room'
   | 'remove-friend'
-  | 'clear-data';
+  | 'clear-data'
+  | 'stream';
 
 export type ToastTone = 'info' | 'success' | 'error';
 

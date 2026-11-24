@@ -1,4 +1,4 @@
-# Networking (M2) and voice signaling (M3)
+# Networking (M2), voice signaling (M3) and stream signaling (M4)
 
 Meldrift is local-first. Signed out, every room, message and friend lives in
 SQLite on that PC. Signing in switches the workspace to a **signaling service**
@@ -17,6 +17,10 @@ you run yourself, so rooms, chat and room voice are shared with other PCs.
 - Voice channels: in-memory voice membership per room, authorization for every
   signal, SDP/ICE relay between channel members only, and authenticated ICE
   (STUN/TURN) configuration. Audio never passes through the service.
+- Stream sessions: one in-memory stream per room, only the room owner can start,
+  only the host socket can stop/change quality, viewers opt in, at most four per
+  room, and SDP/ICE relay only between the host and current viewers. Video never
+  passes through the service.
 
 ```
 bun install --cwd server
@@ -39,7 +43,7 @@ a protocol change breaks the build on whichever side was not updated.
 | `POST /api/friends`, `/accept`, `DELETE /api/friends/:id` | Friend lifecycle |
 | `GET /api/dm/:peerId` | Get or create a conversation with a friend |
 | `GET /api/voice/ice` | Signed-in only: STUN/TURN servers and the voice cap |
-| `WS /ws?token=…` | `message.send` → `message.ack` / `message.new`, presence, membership, voice signaling |
+| `WS /ws?token=…` | `message.send` → `message.ack` / `message.new`, presence, membership, voice signaling, stream lifecycle and video signaling |
 
 The browser cannot set headers on a WebSocket, so the session token travels in
 the query string for that one handshake. The service also accepts
@@ -53,7 +57,27 @@ src/lib/net/realtime.ts   Reconnecting socket: backoff, heartbeat, ack promises
 src/lib/net/map.ts        Pure wire ↔ UI model mapping and message merging
 src/lib/net/hub.ts        The seam the workspace store uses to detect "online"
 src/state/network.ts      Session, connection status, presence, requests, adapter
+src/lib/stream/           Video presets/adaptation, stats, host and viewer peers
+src/state/streamRoom.ts   Capture, stream session, viewer stats, cleanup
 ```
+
+## Stream signaling (M4)
+
+```
+stream.start   host only (room owner); same host socket may update mode/preset
+stream.stop    host socket only
+stream.watch   member, not host, up to four distinct viewers
+stream.unwatch viewer slot only
+stream.preset  host socket only
+stream.sync    asking for the current session snapshot
+stream.offer/answer/ice  relayed between the host and one current viewer
+```
+
+SDP is capped at 60 kB, ICE candidates at 2 kB, and stream signaling is
+rate-limited per socket (300 messages / 10 s). The server ends the stream when
+the host socket closes and removes only the viewer whose socket closes. Stream
+state is in-memory; media is peer-to-peer. Host upload grows with each viewer
+(see `docs/STREAMING.md`).
 
 `workspace.ts` never imports `network.ts` (that would be a cycle). The network
 store installs a `RemoteAdapter` in `hub.ts` while connected; workspace actions

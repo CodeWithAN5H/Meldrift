@@ -39,16 +39,14 @@ describe('settings sanitising', () => {
       outputVolume: -40,
       streamFps: 500,
       streamHeight: 100,
-      streamBitrateKbps: 1,
       controlMode: 'triple' as never,
       pushToTalkKey: 'x'.repeat(40),
     });
 
     expect(settings.inputVolume).toBe(200);
     expect(settings.outputVolume).toBe(0);
-    expect(settings.streamFps).toBe(144);
+    expect(settings.streamFps).toBe(60);
     expect(settings.streamHeight).toBe(360);
-    expect(settings.streamBitrateKbps).toBe(500);
     expect(settings.controlMode).toBe('single');
     expect(settings.pushToTalkKey).toBe(defaultSettings().pushToTalkKey);
   });

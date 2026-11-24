@@ -5,6 +5,7 @@ import { useNetwork } from '@/state/network';
 import { useWorkspace } from '@/state/workspace';
 import { Button, Field, Modal } from '@/components/ui';
 import { MicTestModal } from './MicTestModal';
+import { StreamModal } from './StreamModal';
 import './modals.css';
 
 export function ModalHost() {
@@ -29,6 +30,14 @@ export function ModalHost() {
       return <RemoveFriendModal friendId={payload?.friendId ?? ''} onClose={closeModal} />;
     case 'clear-data':
       return <ClearDataModal onClose={closeModal} />;
+    case 'stream':
+      return (
+        <StreamModal
+          roomId={payload?.roomId ?? ''}
+          initialMode={payload?.mode === 'desktop' ? 'desktop' : 'window'}
+          onClose={closeModal}
+        />
+      );
     default:
       return null;
   }

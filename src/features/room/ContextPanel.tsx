@@ -15,8 +15,10 @@ import { useNetwork } from '@/state/network';
 import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
 import { useVoiceRoom } from '@/state/voiceRoom';
-import { Avatar, IconButton } from '@/components/ui';
+import { useStreamRoom, STREAM_VIEWER_LIMIT } from '@/state/streamRoom';
+import { Avatar, Button, IconButton } from '@/components/ui';
 import { describeConnection } from '@/lib/voice/model';
+import { modeLabel, presetLabel } from '@/lib/stream/model';
 import { copyText } from '@/lib/clipboard';
 import './room.css';
 
@@ -45,6 +47,17 @@ export function ContextPanel({ roomId }: { roomId: string }) {
   );
   const joinVoice = useVoiceRoom((state) => state.join);
   const leaveVoice = useVoiceRoom((state) => state.leave);
+
+  const streamSession = useStreamRoom((state) => state.session);
+  const streamHosting = useStreamRoom((state) => state.hosting);
+  const streamWatching = useStreamRoom((state) => state.watching);
+  const streamViewers = useStreamRoom((state) => state.viewers);
+  const streamMode = useStreamRoom((state) => state.mode);
+  const streamPreset = useStreamRoom((state) => state.preset);
+  const watchStream = useStreamRoom((state) => state.watch);
+  const unwatchStream = useStreamRoom((state) => state.unwatch);
+  const stopHosting = useStreamRoom((state) => state.stopHosting);
+  const openStreamModal = useUi((state) => state.openModal);
 
   if (!room || !profile) return null;
 
@@ -223,17 +236,46 @@ export function ContextPanel({ roomId }: { roomId: string }) {
       </section>
 
       <section className="md-spectate">
-        <span className="md-spectate__icon">
-          <Gamepad2 size={20} />
+        <span className="md-spectate__icon" data-live={Boolean(streamSession)}>
+          {streamSession ? <Eye size={20} /> : <Gamepad2 size={20} />}
         </span>
         <h3 className="md-spectate__title">
-          {room.isOwned ? "You're hosting" : "You're watching"}
+          {streamSession
+            ? streamHosting
+              ? 'You are sharing'
+              : streamWatching
+                ? `Watching ${streamSession.host.displayName}`
+                : `${streamSession.host.displayName} is live`
+            : room.isOwned
+              ? "You're hosting"
+              : 'No live stream'}
         </h3>
         <p className="md-spectate__text">
-          {room.isOwned
-            ? 'Share your game and you decide who gets control, and when to take it back.'
-            : 'The host can hand control to anyone in the room.'}
+          {streamSession
+            ? `${modeLabel(streamHosting ? streamMode : streamSession.mode)} · ${presetLabel(streamHosting ? streamPreset : streamSession.preset)} · ${(streamHosting ? streamViewers : streamSession.viewers).length}/${STREAM_VIEWER_LIMIT} watching. Voice and video use separate connections.`
+            : room.isOwned
+              ? 'Share a game window or a display from the room stage. Nothing is captured until you pick a source.'
+              : 'When the host starts sharing, you can watch without leaving the room or voice.'}
         </p>
+        {streamSession && !streamHosting ? (
+          <Button
+            size="sm"
+            variant={streamWatching ? 'default' : 'primary'}
+            icon={<Eye size={13} />}
+            onClick={() => (streamWatching ? unwatchStream() : watchStream())}
+          >
+            {streamWatching ? 'Leave stream' : 'Watch stream'}
+          </Button>
+        ) : null}
+        {streamHosting ? (
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => openStreamModal('stream', { roomId: room.id, mode: streamMode })}
+          >
+            Change source
+          </Button>
+        ) : null}
         <span className="md-spectate__tag">
           <Eye size={11} /> Spectators never send input
         </span>
@@ -255,20 +297,43 @@ export function ContextPanel({ roomId }: { roomId: string }) {
       <section className="md-card md-context__card">
         <header className="md-context__head">
           <h2 className="md-eyebrow">Session</h2>
+          {streamHosting ? (
+            <button type="button" className="md-context__clear" onClick={() => stopHosting()}>
+              Stop
+            </button>
+          ) : null}
         </header>
         <dl className="md-context__rows">
           <div>
             <dt>Status</dt>
-            <dd>Idle</dd>
+            <dd>{streamSession ? (streamHosting ? 'You are sharing' : 'Live') : 'Idle'}</dd>
           </div>
           <div>
-            <dt>Mode</dt>
-            <dd>{settings.controlMode === 'single' ? 'Single player' : 'Multi controller'}</dd>
+            <dt>Host</dt>
+            <dd>{streamSession ? streamSession.host.displayName : room.isOwned ? 'You' : '—'}</dd>
+          </div>
+          <div>
+            <dt>Capture</dt>
+            <dd>
+              {streamSession
+                ? modeLabel(streamHosting ? streamMode : (streamSession.mode as typeof streamMode))
+                : '—'}
+            </dd>
           </div>
           <div>
             <dt>Quality</dt>
             <dd>
-              {settings.streamHeight}p · {settings.streamFps} fps
+              {streamSession
+                ? presetLabel(streamHosting ? streamPreset : (streamSession.preset as typeof streamPreset))
+                : `${presetLabel(settings.streamPreset)} default`}
+            </dd>
+          </div>
+          <div>
+            <dt>Viewers</dt>
+            <dd>
+              {streamSession
+                ? `${(streamHosting ? streamViewers : streamSession.viewers).length}/${STREAM_VIEWER_LIMIT}`
+                : '—'}
             </dd>
           </div>
           <div>
@@ -278,7 +343,7 @@ export function ContextPanel({ roomId }: { roomId: string }) {
         </dl>
         <p className="md-context__foot">
           <ShieldCheck size={12} />
-          Host approval required for every controller
+          Video is peer-to-peer · capture only while the host shares
         </p>
       </section>
     </aside>

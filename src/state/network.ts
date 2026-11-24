@@ -24,6 +24,7 @@ import { toFriend, toMessage, toProfile, toRoom } from '@/lib/net/map';
 import { setRemoteAdapter, type RemoteAdapter } from '@/lib/net/hub';
 import { setVoiceTransport } from '@/lib/voice/transport';
 import { useVoiceRoom } from '@/state/voiceRoom';
+import { useStreamRoom } from '@/state/streamRoom';
 
 /* --------------------------------------------------------------------------
    Connected mode.
@@ -164,8 +165,9 @@ export const useNetwork = create<NetworkState>((set, get) => ({
   signOut: async () => {
     const currentToken = token;
     const currentServer = activeServer;
-    // Voice must stop before the face of the session goes away.
+    // Voice and screen capture must stop before the session goes away.
     useVoiceRoom.getState().leave();
+    useStreamRoom.getState().reset();
     stopSocket();
     clearInternal();
     set({
@@ -319,6 +321,7 @@ function connectSocket(serverUrl: string, authToken: string): void {
       if (mapped === 'offline' && current.status === 'signed-out') return;
       useNetwork.setState({ status: mapped });
       useVoiceRoom.getState().onConnection(mapped);
+      useStreamRoom.getState().onConnection(mapped);
     },
     onEvent: handleEvent,
   });
@@ -377,6 +380,7 @@ function handleEvent(event: ServerEvent): void {
     }
     default: {
       if (event.t.startsWith('voice.')) useVoiceRoom.getState().handleEvent(event);
+      else if (event.t.startsWith('stream.')) useStreamRoom.getState().handleEvent(event);
       return;
     }
   }

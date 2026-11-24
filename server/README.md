@@ -1,8 +1,8 @@
 # Meldrift signaling service
 
-The service that makes rooms, presence, friends, chat and room voice work
-between PCs. It is a single Bun binary with one SQLite file, designed to be
-self-hosted.
+The service that makes rooms, presence, friends, chat, room voice and game
+streaming between PCs. It is a single Bun binary with one SQLite file, designed
+to be self-hosted.
 
 ```
 bun install
@@ -35,11 +35,14 @@ MELDRIFT_DATA=./data/meldrift.db bun run start     # http://127.0.0.1:8787
   with the socket.
 - `GET /api/voice/ice` for authenticated clients only: STUN/TURN configuration
   and the participant cap. Audio never passes through this service.
+- Game streaming (M4): one in-memory stream per room, host-only start/stop and
+  quality control, explicit viewer opt-in capped at four, and SDP/ICE relay only
+  between the authenticated host and its current viewers. Video never passes
+  through this service; host upload scales with viewer count.
 
 ## What it does not do yet
 
-Video and game streaming (M4), remote control (M5), room deletion or leaving a
-room, and file uploads. Message delivery is live-only: if both people are
+Remote control (M5), room deletion or leaving a room, and file uploads. Message delivery is live-only: if both people are
 offline, the message is stored but pushed to nobody until they reconnect and
 open the conversation. No TURN server is bundled — configure one yourself if
 participants may be behind strict NATs.
@@ -68,8 +71,10 @@ covers registration, login, duplicate usernames, room creation and joining,
 fan-out, membership enforcement, DMs, friend requests, presence transitions and
 voice (ICE config auth, non-member and unknown-room rejection, duplicate joins,
 offer/answer/ICE routing, invalid and oversized payloads, rate limiting, state
-broadcast, leave/close cleanup, room switch and the participant cap). Currently
-25 tests.
+broadcast, leave/close cleanup, the eight-participant cap) and streaming
+(host/member authorization, one stream per room, viewer opt-in/retry, four-viewer
+cap, host-only preset control, SDP/ICE routing and limits, host/viewer cleanup).
+Currently 35 tests.
 
 ## Self-hosting notes
 

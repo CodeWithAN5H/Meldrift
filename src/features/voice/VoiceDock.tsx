@@ -16,6 +16,7 @@ import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
 import { useVoiceRoom } from '@/state/voiceRoom';
 import { useWorkspace } from '@/state/workspace';
+import { useStreamRoom } from '@/state/streamRoom';
 import { IconButton } from '@/components/ui';
 import './voice.css';
 
@@ -47,6 +48,51 @@ export function VoiceDock() {
   const toggleVoiceMuted = useVoiceRoom((state) => state.toggleMuted);
   const toggleVoiceDeafened = useVoiceRoom((state) => state.toggleDeafened);
   const leaveVoice = useVoiceRoom((state) => state.leave);
+
+  const view = useUi((state) => state.view);
+  const rooms = useWorkspace((state) => state.rooms);
+  const currentRoom = view.kind === 'room' ? rooms.find((room) => room.id === view.roomId) : null;
+  const streamSession = useStreamRoom((state) => state.session);
+  const streamHosting = useStreamRoom((state) => state.hosting);
+  const streamWatching = useStreamRoom((state) => state.watching);
+  const watchStream = useStreamRoom((state) => state.watch);
+  const unwatchStream = useStreamRoom((state) => state.unwatch);
+  const stopStream = useStreamRoom((state) => state.stopHosting);
+  const shareDisabled =
+    !streamHosting && !streamWatching && !streamSession && !currentRoom?.isOwned;
+
+  const toggleStream = () => {
+    if (streamHosting) {
+      stopStream();
+      return;
+    }
+    if (streamWatching) {
+      unwatchStream();
+      return;
+    }
+    if (streamSession) {
+      watchStream();
+      return;
+    }
+    if (currentRoom) openModal('stream', { roomId: currentRoom.id, mode: 'window' });
+  };
+
+  const streamLabel = streamHosting
+    ? 'Stop sharing'
+    : streamWatching
+      ? 'Leave stream'
+      : streamSession
+        ? 'Watch stream'
+        : 'Share screen';
+  const streamTitle = streamHosting
+    ? 'Stop sharing your screen with this room'
+    : streamWatching
+      ? 'Stop watching the stream; voice and room membership stay connected'
+      : streamSession
+        ? `Watch ${streamSession.host.displayName}'s stream`
+        : shareDisabled
+          ? 'Only the room host can start a stream'
+          : 'Share a game window or display with this room';
 
   const micLive = inVoice ? !voiceMuted : capturing && micEnabled;
   const micMuted = inVoice ? voiceMuted : capturing && !micEnabled;
@@ -96,13 +142,16 @@ export function VoiceDock() {
     void win.isFullscreen().then((full) => win.setFullscreen(!full)).catch(() => undefined);
   }, [pushToast]);
 
-  const statusText = inVoice
+  const baseStatus = inVoice
     ? voiceStatus === 'connected'
       ? `${voiceRoomName ?? 'Voice'} · ${peers + 1}`
       : VOICE_STATUS_LABEL[voiceStatus] ?? 'In voice'
     : capturing
       ? 'Mic check'
       : 'Not in voice';
+  const statusText =
+    baseStatus +
+    (streamHosting ? ' · Sharing' : streamWatching ? ' · Watching' : '');
   const dotState = inVoice
     ? voiceStatus === 'connected'
       ? 'live'
@@ -178,9 +227,13 @@ export function VoiceDock() {
           <button
             type="button"
             className="md-dock__round"
-            aria-label="Share screen"
-            disabled
-            title="Screen and game capture arrives in milestone M4"
+            data-active={streamHosting || streamWatching}
+            data-stream-host={streamHosting}
+            aria-label={streamLabel}
+            aria-pressed={streamHosting || streamWatching}
+            disabled={shareDisabled}
+            title={streamTitle}
+            onClick={toggleStream}
           >
             <MonitorUp size={17} />
           </button>
@@ -189,7 +242,7 @@ export function VoiceDock() {
             className="md-dock__round"
             aria-label="Game session controls"
             disabled
-            title="Live game sessions arrive in milestone M4"
+            title="Remote control arrives in M5; streaming is started with Share screen"
           >
             <Gamepad2 size={17} />
           </button>

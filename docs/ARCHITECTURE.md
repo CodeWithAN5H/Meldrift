@@ -1,7 +1,7 @@
 # Meldrift architecture
 
-Status: `0.3.0-alpha.1` (M0–M3 complete: foundation, permanent UI, the M2
-networking foundation and M3 real-time voice).
+Status: `0.4.0-alpha.1` (M0–M4 complete: foundation, permanent UI, the M2
+networking foundation, M3 real-time voice and M4 game streaming).
 
 ## Stack decisions
 
@@ -15,10 +15,32 @@ networking foundation and M3 real-time voice).
 | Persistence | **SQLite via rusqlite (bundled)** | Real relational data, WAL for non-blocking reads, no external database. |
 | Networking | **Bun + bun:sqlite + WebSocket** | One compiled binary, no Node/native build step, self-hostable; the same TypeScript protocol file is imported by the client. |
 | Voice | **WebRTC in WebView2 (Chromium)** | A maintained WebRTC stack with Opus, ICE, DTLS-SRTP, echo cancellation (AEC3), noise suppression and gain control already inside the WebView2 runtime. No extra native audio/WebRTC dependency, no second process, and the same code path on every Windows machine. See `docs/VOICE.md` for why not `webrtc-rs` + a native audio stack. |
+| Video capture | **WebView2 `getDisplayMedia` (Windows Graphics Capture)** | Chromium's supported Win32 capture path, no full-resolution frame copies over IPC and no second capture/WebRTC stack. The same picker provides window and display sources. See `docs/STREAMING.md`. |
+| Video transport | **WebRTC video-only peer connections, host → viewer mesh** | Reuses the WebView2 codec and ICE stack while keeping voice SDP independent. One connection per viewer, capped at four because the host uploads each encoded stream itself. |
 | Tests | **Vitest** + Rust `#[cfg(test)]` | Fast unit/integration coverage on both sides of the IPC boundary. |
 
 Deviations from the preferred stack: none. The only additions are Zustand (state
 selection) and Lucide (icons); both are small and replaceable.
+
+## Streaming boundary
+
+M4 adds a second media plane without touching the M3 voice plane:
+
+- Capture is WebView2 `getDisplayMedia`; window and display modes use different
+  picker constraints and never switch silently.
+- The host creates one video-only `RTCPeerConnection` per viewer. Voice peer
+  connections and their SDP are never modified by video start/stop.
+- The signaling service tracks an in-memory stream session per room (host, mode,
+  preset, viewers) and relays SDP/ICE only between the authenticated host and its
+  current viewers. Media stays peer-to-peer.
+- The adaptive controller reads real sender/receiver stats every two seconds and
+  adjusts bitrate, frame rate and scale through `setParameters`, not by
+  recreating connections.
+- Capture and connections are torn down when the track ends, the host stops or
+  leaves, the socket drops, the user signs out or the app closes; viewers see a
+  clear reconnect/error state rather than a frozen frame.
+
+Details, limits and troubleshooting: `docs/STREAMING.md`.
 
 ## Module boundaries
 
@@ -49,6 +71,9 @@ src/
   lib/voice/model.ts       ICE parsing, speaking hysteresis, status derivation
   lib/voice/session.ts     WebRTC mesh: offers, answers, ICE, restart, cleanup
   lib/voice/transport.ts   Signaling seam installed by the network store
+  lib/stream/model.ts      Capture bounds/presets, adaptive encoder, stats, errors
+  lib/stream/session.ts    Host/viewer video peer connections
+  state/streamRoom.ts      Capture, viewer sessions, stats loops, lifecycle
   state/workspace.ts       Domain state and actions (local or server-backed)
   state/network.ts         Session, connection status, presence, requests
   state/ui.ts              Navigation, modals, toasts (never persisted)

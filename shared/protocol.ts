@@ -112,7 +112,14 @@ export type ClientEvent =
   | { t: 'voice.join'; roomId: string }
   | { t: 'voice.leave'; roomId: string }
   | { t: 'voice.state'; roomId: string; muted: boolean; deafened: boolean; speaking: boolean }
-  | VoiceSignalEvent;
+  | VoiceSignalEvent
+  | { t: 'stream.start'; roomId: string; mode: StreamMode; preset: StreamPreset }
+  | { t: 'stream.stop'; roomId: string }
+  | { t: 'stream.watch'; roomId: string }
+  | { t: 'stream.unwatch'; roomId: string }
+  | { t: 'stream.preset'; roomId: string; preset: StreamPreset }
+  | { t: 'stream.sync'; roomId: string }
+  | StreamSignalEvent;
 
 export type ServerEvent =
   | { t: 'ready'; user: PublicUser; presence: Record<string, Presence> }
@@ -138,7 +145,14 @@ export type ServerEvent =
       speaking: boolean;
     }
   | { t: 'voice.error'; roomId?: string; error: string }
-  | VoiceServerSignalEvent;
+  | VoiceServerSignalEvent
+  | { t: 'stream.started'; session: StreamSessionView }
+  | { t: 'stream.stopped'; roomId: string; reason?: string }
+  | { t: 'stream.viewers'; roomId: string; viewers: StreamParticipantView[] }
+  | { t: 'stream.viewer.joined'; roomId: string; viewer: StreamParticipantView }
+  | { t: 'stream.viewer.left'; roomId: string; userId: string }
+  | { t: 'stream.error'; roomId?: string; error: string }
+  | StreamServerSignalEvent;
 
 export interface ApiError {
   error: string;
@@ -198,6 +212,49 @@ export type VoiceServerSignalEvent =
   | { t: 'voice.offer'; roomId: string; from: string; sdp: string }
   | { t: 'voice.answer'; roomId: string; from: string; sdp: string }
   | { t: 'voice.ice'; roomId: string; from: string; candidate: VoiceIceCandidate };
+
+/* ---- Game streaming (M4) ----------------------------------------------- */
+
+/**
+ * The host sends one video stream to each viewer (a host→viewer mesh), on the
+ * same peer-to-peer path as voice but on a separate RTCPeerConnection per
+ * viewer. Four viewers keeps a 1080p host upload near 12–16 Mbps; beyond that
+ * an SFU is required.
+ */
+export const STREAM_MAX_VIEWERS = 4;
+export const STREAM_MAX_SDP_LENGTH = 60_000;
+export const STREAM_MAX_CANDIDATE_LENGTH = 2_000;
+/** SDP + ICE for every viewer, bounded per socket. */
+export const STREAM_SIGNAL_BURST = 300;
+export const STREAM_SIGNAL_WINDOW_MS = 10_000;
+
+export type StreamMode = 'window' | 'desktop';
+export type StreamPreset = 'auto' | 'smooth' | 'balanced' | 'quality';
+
+export interface StreamParticipantView {
+  userId: string;
+  displayName: string;
+  avatarColor: string;
+}
+
+export interface StreamSessionView {
+  roomId: string;
+  host: StreamParticipantView;
+  mode: StreamMode;
+  preset: StreamPreset;
+  startedAt: number;
+  viewers: StreamParticipantView[];
+}
+
+export type StreamSignalEvent =
+  | { t: 'stream.offer'; roomId: string; to: string; sdp: string }
+  | { t: 'stream.answer'; roomId: string; to: string; sdp: string }
+  | { t: 'stream.ice'; roomId: string; to: string; candidate: VoiceIceCandidate };
+
+export type StreamServerSignalEvent =
+  | { t: 'stream.offer'; roomId: string; from: string; sdp: string }
+  | { t: 'stream.answer'; roomId: string; from: string; sdp: string }
+  | { t: 'stream.ice'; roomId: string; from: string; candidate: VoiceIceCandidate };
 
 export const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,24}$/;
 export const MIN_PASSWORD_LENGTH = 8;

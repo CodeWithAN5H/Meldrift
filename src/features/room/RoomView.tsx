@@ -15,11 +15,15 @@ import {
 import { scopeKey, useRoom, useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
 import { useVoiceRoom } from '@/state/voiceRoom';
+import { useStreamRoom } from '@/state/streamRoom';
 import { useUi } from '@/state/ui';
 import { Button, EmptyState, IconButton, Pill, Spinner } from '@/components/ui';
 import { Menu } from '@/components/Menu';
 import { ChatThread } from '@/features/chat/ChatThread';
+import { StreamStage } from '@/features/room/StreamStage';
 import { colorFor, vars } from '@/lib/model';
+import { modeLabel } from '@/lib/stream/model';
+import { STREAM_VIEWER_LIMIT } from '@/state/streamRoom';
 import { copyText } from '@/lib/clipboard';
 import { clockTime } from '@/lib/format';
 import './room.css';
@@ -39,6 +43,7 @@ export function RoomView({ roomId }: { roomId: string }) {
   const messageCount = useWorkspace(
     (state) => state.messages[scopeKey('room', roomId)]?.length ?? 0,
   );
+  const profile = useWorkspace((state) => state.profile);
   const inVoice = useVoiceRoom((state) => state.roomId === roomId);
   const voiceStatus = useVoiceRoom((state) => (state.roomId === roomId ? state.status : 'idle'));
   const voiceCount = useVoiceRoom((state) =>
@@ -46,10 +51,24 @@ export function RoomView({ roomId }: { roomId: string }) {
   );
   const joinVoice = useVoiceRoom((state) => state.join);
   const leaveVoice = useVoiceRoom((state) => state.leave);
+  const enterStreamRoom = useStreamRoom((state) => state.enterRoom);
+  const leaveStreamRoom = useStreamRoom((state) => state.leaveRoom);
+  const streamSession = useStreamRoom((state) => state.session);
+  const streamHosting = useStreamRoom((state) => state.hosting);
+  const streamWatching = useStreamRoom((state) => state.watching);
+  const streamViewers = useStreamRoom((state) => state.viewers);
+  const streamMode = useStreamRoom((state) => state.mode);
+  const watchStream = useStreamRoom((state) => state.watch);
+  const unwatchStream = useStreamRoom((state) => state.unwatch);
 
   useEffect(() => {
     setTab('chat');
   }, [roomId]);
+
+  useEffect(() => {
+    enterStreamRoom(roomId);
+    return () => leaveStreamRoom();
+  }, [roomId, enterStreamRoom, leaveStreamRoom]);
 
   if (!room) {
     return (
@@ -170,41 +189,7 @@ export function RoomView({ roomId }: { roomId: string }) {
       </header>
 
       <section className="md-stagecard" aria-label="Game session">
-        <div className="md-stage">
-          <div className="md-stage__chrome">
-            <span className="md-stage__badge" data-live="false">
-              <span className="md-stage__badge-dot" />
-              Session idle
-            </span>
-            <span className="md-stage__code">
-              <span className="md-eyebrow">Invite</span>
-              <button type="button" onClick={() => void copyInvite()}>
-                {room.inviteCode}
-              </button>
-            </span>
-          </div>
-
-          <div className="md-stage__center">
-            <span className="md-stage__icon">
-              <Gamepad2 size={24} />
-            </span>
-            <h2 className="md-stage__title">No game session running</h2>
-            <p className="md-stage__text">
-              The host captures their own game and the room watches live. Capture,
-              adaptive streaming and spectator delivery arrive in milestone M4.
-            </p>
-            <Button size="sm" onClick={() => navigate({ kind: 'games' })}>
-              Open game library
-            </Button>
-          </div>
-
-          <div className="md-stage__foot">
-            <span className="md-stage__hint">
-              <ShieldCheck size={12} />
-              Remote input is never enabled automatically.
-            </span>
-          </div>
-        </div>
+        <StreamStage room={room} online={online} />
 
         <div className="md-sessionbar">
           <span
@@ -217,9 +202,17 @@ export function RoomView({ roomId }: { roomId: string }) {
           <div className="md-sessionbar__info">
             <p className="md-sessionbar__name">{room.gameTitle ?? 'No game selected'}</p>
             <p className="md-sessionbar__meta">
-              {room.isOwned ? 'Hosted by you' : 'Hosted by a friend'}
+              {streamSession
+                ? `Streaming from ${streamSession.host.displayName}`
+                : room.isOwned
+                  ? 'Hosted by you'
+                  : 'Hosted by a friend'}
               <span aria-hidden="true">·</span>
-              <span className="md-sessionbar__status">Idle</span>
+              <span className="md-sessionbar__status">
+                {streamSession
+                  ? `${streamHosting ? 'You are sharing' : 'Live'} · ${modeLabel(streamHosting ? streamMode : streamSession.mode)} · ${streamHosting ? streamViewers.length : streamSession.viewers.length}/${STREAM_VIEWER_LIMIT} watching`
+                  : 'Idle'}
+              </span>
             </p>
           </div>
           <div className="md-sessionbar__actions">
@@ -228,15 +221,28 @@ export function RoomView({ roomId }: { roomId: string }) {
               variant="primary"
               icon={<Gamepad2 size={14} />}
               disabled
-              title="Take control needs a live session (M4/M5)"
+              title="Remote control arrives in M5"
             >
               Take control
             </Button>
-            <Button size="sm" icon={<ListOrdered size={14} />} disabled title="The queue opens with a live session">
+            <Button size="sm" icon={<ListOrdered size={14} />} disabled title="The player queue arrives with remote control (M5)">
               Queue
             </Button>
-            <Button size="sm" icon={<Eye size={14} />} disabled title="Spectating needs a live stream">
-              Spectate
+            <Button
+              size="sm"
+              variant={streamWatching ? 'danger' : 'default'}
+              icon={<Eye size={14} />}
+              disabled={!streamSession || (streamSession.host.userId === (profile?.id ?? ''))}
+              title={
+                !streamSession
+                  ? 'The host has not started a stream'
+                  : streamWatching
+                    ? 'Stop watching and leave the stream'
+                    : 'Watch the live stream'
+              }
+              onClick={() => (streamWatching ? unwatchStream() : watchStream())}
+            >
+              {streamWatching ? 'Leave stream' : 'Spectate'}
             </Button>
           </div>
         </div>

@@ -19,6 +19,7 @@ import { listAudioOutputs, voiceEngine } from '@/lib/voice';
 import { Avatar, Button, Field, Switch, Slider } from '@/components/ui';
 import { AVATAR_COLORS, vars } from '@/lib/model';
 import { resolutionLabel } from '@/lib/format';
+import { STREAM_PRESET_ORDER, STREAM_PRESET_SPECS } from '@/lib/stream/model';
 import { APP_VERSION } from '@/lib/version';
 import { MicLevel } from '@/features/voice/MicLevel';
 import './settings.css';
@@ -669,49 +670,55 @@ function StreamingSection() {
   return (
     <>
       <div className="md-note">
-        <strong>Preferences only.</strong> Capture, encoding and streaming land in M4.
-        These values are stored now so the pipeline has a single source of truth.
+        <strong>Screen capture runs in WebView2.</strong> The host picks a window or
+        display from Windows' own picker, and Meldrift negotiates a direct WebRTC
+        video connection to each viewer. Audio stays on its own connection, so
+        streaming never interrupts voice.
       </div>
 
-      <Group title="Capture quality">
-        <Row title="Resolution">
+      <Group title="Streaming defaults">
+        <Row title="Quality preset" hint="Auto adapts bitrate and resolution to the network.">
+          <select
+            className="md-select"
+            value={settings.streamPreset}
+            onChange={(event) =>
+              void updateSettings({
+                streamPreset: event.target.value as typeof settings.streamPreset,
+              })
+            }
+          >
+            {STREAM_PRESET_ORDER.map((preset) => (
+              <option key={preset} value={preset}>
+                {STREAM_PRESET_SPECS[preset].label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row title="Maximum resolution" hint="Presets cap resolution; this is the ceiling.">
           <select
             className="md-select"
             value={settings.streamHeight}
             onChange={(event) => void updateSettings({ streamHeight: Number(event.target.value) })}
           >
-            {[720, 1080, 1440].map((height) => (
+            {[720, 1080].map((height) => (
               <option key={height} value={height}>
                 {resolutionLabel(height)}
               </option>
             ))}
           </select>
         </Row>
-        <Row title="Frame rate">
+        <Row title="Maximum frame rate">
           <select
             className="md-select"
             value={settings.streamFps}
             onChange={(event) => void updateSettings({ streamFps: Number(event.target.value) })}
           >
-            {[30, 60, 120].map((fps) => (
+            {[30, 60].map((fps) => (
               <option key={fps} value={fps}>
                 {fps} fps
               </option>
             ))}
           </select>
-        </Row>
-        <Row title="Target bitrate" hint="Higher bitrate needs more upload bandwidth.">
-          <div className="md-inline md-inline--grow">
-            <Slider
-              min={2000}
-              max={40000}
-              step={500}
-              value={settings.streamBitrateKbps}
-              aria-label="Target bitrate"
-              onValueChange={(value) => void updateSettings({ streamBitrateKbps: value })}
-            />
-            <span className="md-value">{(settings.streamBitrateKbps / 1000).toFixed(1)} Mbps</span>
-          </div>
         </Row>
       </Group>
 

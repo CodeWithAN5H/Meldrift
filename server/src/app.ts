@@ -3,6 +3,11 @@ import type { Server, ServerWebSocket } from 'bun';
 import {
   MAX_MESSAGE_LENGTH,
   PROTOCOL_VERSION,
+  STREAM_MAX_CANDIDATE_LENGTH,
+  STREAM_MAX_SDP_LENGTH,
+  STREAM_MAX_VIEWERS,
+  STREAM_SIGNAL_BURST,
+  STREAM_SIGNAL_WINDOW_MS,
   VOICE_MAX_CANDIDATE_LENGTH,
   VOICE_MAX_PARTICIPANTS,
   VOICE_MAX_SDP_LENGTH,
@@ -25,6 +30,10 @@ import {
   type RoomMemberView,
   type RoomView,
   type ServerEvent,
+  type StreamMode,
+  type StreamParticipantView,
+  type StreamPreset,
+  type StreamSessionView,
   type VoiceConfigView,
   type VoiceIceCandidate,
   type VoiceParticipantView,
@@ -41,6 +50,8 @@ export interface SocketData {
   recent: number[];
   /** Timestamps of recent voice signals (SDP/ICE). */
   voiceRecent: number[];
+  /** Timestamps of recent stream signals (SDP/ICE). */
+  streamRecent: number[];
 }
 
 export interface VoiceOptions {
@@ -57,6 +68,19 @@ interface VoiceMember {
   /** The socket that joined; a reconnect replaces it rather than duplicating. */
   socketId: number;
 }
+
+interface StreamSession {
+  roomId: string;
+  hostUserId: string;
+  /** The socket hosting; a stale socket can never control a newer stream. */
+  hostSocketId: number;
+  mode: StreamMode;
+  preset: StreamPreset;
+  startedAt: number;
+  viewers: Map<string, { socketId: number }>;
+}
+
+const STREAM_PRESETS: readonly StreamPreset[] = ['auto', 'smooth', 'balanced', 'quality'];
 
 const DEFAULT_STUN_URLS = ['stun:stun.l.google.com:19302'];
 
@@ -102,6 +126,8 @@ export class SignalingService {
   private authAttempts = new Map<string, { count: number; resetAt: number }>();
   /** roomId → userId → voice membership. Voice is live state, never persisted. */
   private voiceRooms = new Map<string, Map<string, VoiceMember>>();
+  /** roomId → live video session. Never persisted; one host per room. */
+  private streams = new Map<string, StreamSession>();
   private nextSocketId = 1;
 
   constructor(
@@ -157,6 +183,7 @@ export class SignalingService {
           socketId: this.nextSocketId++,
           recent: [],
           voiceRecent: [],
+          streamRecent: [],
         },
       });
       return upgraded ? undefined : this.fail('WebSocket upgrade failed', 400, origin);
@@ -942,6 +969,321 @@ export class SignalingService {
     });
   }
 
+  /* ---- Game streaming -------------------------------------------------- */
+
+  private streamParticipant(userId: string): StreamParticipantView {
+    const row = this.db.query('SELECT * FROM users WHERE id = ?').get(userId) as UserRow | null;
+    return {
+      userId,
+      displayName: row?.display_name ?? 'Player',
+      avatarColor: row?.avatar_color ?? '#7c4df2',
+    };
+  }
+
+  private streamView(session: StreamSession): StreamSessionView {
+    return {
+      roomId: session.roomId,
+      host: this.streamParticipant(session.hostUserId),
+      mode: session.mode,
+      preset: session.preset,
+      startedAt: session.startedAt,
+      viewers: [...session.viewers.keys()].map((userId) => this.streamParticipant(userId)),
+    };
+  }
+
+  private broadcastStreamSession(session: StreamSession): void {
+    this.broadcastToRoom(session.roomId, { t: 'stream.started', session: this.streamView(session) });
+  }
+
+  private broadcastStreamViewers(session: StreamSession): void {
+    this.broadcastToRoom(session.roomId, {
+      t: 'stream.viewers',
+      roomId: session.roomId,
+      viewers: [...session.viewers.keys()].map((userId) => this.streamParticipant(userId)),
+    });
+  }
+
+  private endStream(roomId: string, reason: string): void {
+    const session = this.streams.get(roomId);
+    if (!session) return;
+    this.streams.delete(roomId);
+    this.broadcastToRoom(roomId, { t: 'stream.stopped', roomId, reason });
+  }
+
+  /**
+   * Only the room owner may broadcast. Repeating `stream.start` on the same
+   * socket reconfigures an active stream (source or preset change) without
+   * dropping viewers; a different socket can never take over someone's stream.
+   */
+  private handleStreamStart(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'stream.start' }>,
+  ): void {
+    const roomId = String(event.roomId ?? '');
+    if (!roomId || roomId.length > 64) {
+      this.send(socket, { t: 'stream.error', error: 'Unknown room' });
+      return;
+    }
+    const room = this.db.query('SELECT * FROM rooms WHERE id = ?').get(roomId) as RoomRow | null;
+    if (!room) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Room not found' });
+      return;
+    }
+    if (!this.isRoomMember(socket.data.userId, roomId)) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'You are not a member of this room' });
+      return;
+    }
+    if (room.owner_id !== socket.data.userId) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Only the host of this room can share a screen' });
+      return;
+    }
+    if (event.mode !== 'window' && event.mode !== 'desktop') {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Unknown capture mode' });
+      return;
+    }
+    if (!STREAM_PRESETS.includes(event.preset)) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Unknown quality preset' });
+      return;
+    }
+
+    const existing = this.streams.get(roomId);
+    if (existing) {
+      if (existing.hostUserId !== socket.data.userId || existing.hostSocketId !== socket.data.socketId) {
+        this.send(socket, { t: 'stream.error', roomId, error: 'This room is already streaming' });
+        return;
+      }
+      existing.mode = event.mode;
+      existing.preset = event.preset;
+      this.broadcastStreamSession(existing);
+      return;
+    }
+
+    const session: StreamSession = {
+      roomId,
+      hostUserId: socket.data.userId,
+      hostSocketId: socket.data.socketId,
+      mode: event.mode,
+      preset: event.preset,
+      startedAt: Date.now(),
+      viewers: new Map(),
+    };
+    this.streams.set(roomId, session);
+    this.broadcastStreamSession(session);
+  }
+
+  private handleStreamStop(socket: AuthedSocket, roomId: string): void {
+    const session = this.streams.get(roomId);
+    if (!session) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'No stream is running in this room' });
+      return;
+    }
+    if (
+      session.hostUserId !== socket.data.userId ||
+      session.hostSocketId !== socket.data.socketId
+    ) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Only the streaming host can stop this stream' });
+      return;
+    }
+    this.endStream(roomId, 'Host stopped the stream');
+  }
+
+  /** Viewers opt in explicitly: watching consumes the host's upload bandwidth. */
+  private handleStreamWatch(socket: AuthedSocket, roomId: string): void {
+    const session = this.streams.get(roomId);
+    if (!session) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'No stream is running in this room' });
+      return;
+    }
+    if (session.hostUserId === socket.data.userId) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'You are hosting this stream' });
+      return;
+    }
+    if (!this.isRoomMember(socket.data.userId, roomId)) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'You are not a member of this room' });
+      return;
+    }
+
+    const existing = session.viewers.get(socket.data.userId);
+    if (existing && existing.socketId === socket.data.socketId) {
+      // A retry on the same socket keeps the viewer slot but needs a fresh
+      // offer: tell the host to replace that viewer's failed peer connection.
+      this.send(socket, { t: 'stream.started', session: this.streamView(session) });
+      this.sendTo(session.hostUserId, {
+        t: 'stream.viewer.joined',
+        roomId,
+        viewer: this.streamParticipant(socket.data.userId),
+      });
+      return;
+    }
+    if (!existing && session.viewers.size >= STREAM_MAX_VIEWERS) {
+      this.send(socket, {
+        t: 'stream.error',
+        roomId,
+        error: `This stream is full (${STREAM_MAX_VIEWERS} viewers)`,
+      });
+      return;
+    }
+
+    session.viewers.set(socket.data.userId, { socketId: socket.data.socketId });
+    this.send(socket, { t: 'stream.started', session: this.streamView(session) });
+    this.broadcastStreamViewers(session);
+    this.sendTo(session.hostUserId, {
+      t: 'stream.viewer.joined',
+      roomId,
+      viewer: this.streamParticipant(socket.data.userId),
+    });
+  }
+
+  private handleStreamUnwatch(socket: AuthedSocket, roomId: string): void {
+    const session = this.streams.get(roomId);
+    if (!session) return;
+    const viewer = session.viewers.get(socket.data.userId);
+    if (!viewer || viewer.socketId !== socket.data.socketId) return;
+    session.viewers.delete(socket.data.userId);
+    this.broadcastStreamViewers(session);
+    this.sendTo(session.hostUserId, {
+      t: 'stream.viewer.left',
+      roomId,
+      userId: socket.data.userId,
+    });
+  }
+
+  private handleStreamPreset(
+    socket: AuthedSocket,
+    roomId: string,
+    preset: StreamPreset,
+  ): void {
+    const session = this.streams.get(roomId);
+    if (!session) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'No stream is running in this room' });
+      return;
+    }
+    if (
+      session.hostUserId !== socket.data.userId ||
+      session.hostSocketId !== socket.data.socketId
+    ) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Only the streaming host can change quality' });
+      return;
+    }
+    if (!STREAM_PRESETS.includes(preset)) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Unknown quality preset' });
+      return;
+    }
+    session.preset = preset;
+    this.broadcastStreamSession(session);
+  }
+
+  private handleStreamSync(socket: AuthedSocket, roomId: string): void {
+    if (!roomId || !this.isRoomMember(socket.data.userId, roomId)) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'You are not a member of this room' });
+      return;
+    }
+    const session = this.streams.get(roomId);
+    if (session) {
+      this.send(socket, { t: 'stream.started', session: this.streamView(session) });
+    } else {
+      this.send(socket, { t: 'stream.stopped', roomId, reason: 'No stream is running' });
+    }
+  }
+
+  /**
+   * Video SDP/ICE is relayed only between the current host and current viewers
+   * of the same session; the media itself never passes through the service.
+   */
+  private handleStreamSignal(
+    socket: AuthedSocket,
+    event: Extract<ClientEvent, { t: 'stream.offer' | 'stream.answer' | 'stream.ice' }>,
+  ): void {
+    const now = Date.now();
+    socket.data.streamRecent = socket.data.streamRecent.filter(
+      (stamp) => now - stamp < STREAM_SIGNAL_WINDOW_MS,
+    );
+    if (socket.data.streamRecent.length >= STREAM_SIGNAL_BURST) {
+      this.send(socket, {
+        t: 'stream.error',
+        roomId: String(event.roomId ?? '') || undefined,
+        error: 'Stream signalling is too fast; slow down',
+      });
+      return;
+    }
+
+    const roomId = String(event.roomId ?? '');
+    const to = String(event.to ?? '');
+    if (!roomId || roomId.length > 64 || !to || to.length > 64 || to === socket.data.userId) {
+      this.send(socket, { t: 'stream.error', roomId: roomId || undefined, error: 'Invalid stream target' });
+      return;
+    }
+
+    const session = this.streams.get(roomId);
+    if (!session) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'No stream is running in this room' });
+      return;
+    }
+    const isHost =
+      session.hostUserId === socket.data.userId &&
+      session.hostSocketId === socket.data.socketId;
+    const viewer = session.viewers.get(socket.data.userId);
+    const isViewer = viewer?.socketId === socket.data.socketId;
+    if (!isHost && !isViewer) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'You are not part of this stream' });
+      return;
+    }
+    if (isHost) {
+      if (!session.viewers.has(to)) {
+        this.send(socket, { t: 'stream.error', roomId, error: 'That player is not watching this stream' });
+        return;
+      }
+      if (event.t === 'stream.answer') {
+        this.send(socket, { t: 'stream.error', roomId, error: 'A host does not answer its own stream' });
+        return;
+      }
+    } else {
+      if (to !== session.hostUserId) {
+        this.send(socket, { t: 'stream.error', roomId, error: 'Stream signalling must go to the host' });
+        return;
+      }
+      if (event.t === 'stream.offer') {
+        this.send(socket, { t: 'stream.error', roomId, error: 'Only the host can offer a stream' });
+        return;
+      }
+    }
+
+    if (event.t === 'stream.ice') {
+      const candidate = event.candidate as VoiceIceCandidate | undefined;
+      if (
+        !candidate ||
+        typeof candidate.candidate !== 'string' ||
+        candidate.candidate.length > STREAM_MAX_CANDIDATE_LENGTH ||
+        (candidate.sdpMid != null && typeof candidate.sdpMid !== 'string') ||
+        (candidate.sdpMLineIndex != null && typeof candidate.sdpMLineIndex !== 'number')
+      ) {
+        this.send(socket, { t: 'stream.error', roomId, error: 'Invalid ICE candidate' });
+        return;
+      }
+      socket.data.streamRecent.push(now);
+      this.sendTo(to, {
+        t: 'stream.ice',
+        roomId,
+        from: socket.data.userId,
+        candidate: {
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid ?? null,
+          sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+          usernameFragment: candidate.usernameFragment ?? null,
+        },
+      });
+      return;
+    }
+
+    const sdp = event.sdp;
+    if (typeof sdp !== 'string' || sdp.length === 0 || sdp.length > STREAM_MAX_SDP_LENGTH) {
+      this.send(socket, { t: 'stream.error', roomId, error: 'Invalid session description' });
+      return;
+    }
+    socket.data.streamRecent.push(now);
+    this.sendTo(to, { t: event.t, roomId, from: socket.data.userId, sdp });
+  }
+
   /* ---- Presence -------------------------------------------------------- */
 
   presenceOf(userId: string): Presence {
@@ -999,6 +1341,28 @@ export class SignalingService {
   }
 
   onClose(socket: AuthedSocket): void {
+    // Video is live state too: a dead host ends the stream for every viewer,
+    // and a dead viewer must not keep consuming the host's upload.
+    for (const [roomId, session] of [...this.streams]) {
+      if (
+        session.hostUserId === socket.data.userId &&
+        session.hostSocketId === socket.data.socketId
+      ) {
+        this.endStream(roomId, 'The host disconnected');
+        continue;
+      }
+      const viewer = session.viewers.get(socket.data.userId);
+      if (viewer && viewer.socketId === socket.data.socketId) {
+        session.viewers.delete(socket.data.userId);
+        this.broadcastStreamViewers(session);
+        this.sendTo(session.hostUserId, {
+          t: 'stream.viewer.left',
+          roomId,
+          userId: socket.data.userId,
+        });
+      }
+    }
+
     // Voice is live state: a closed socket must never leave a ghost participant.
     for (const [roomId, members] of [...this.voiceRooms]) {
       const member = members.get(socket.data.userId);
@@ -1052,6 +1416,29 @@ export class SignalingService {
       case 'voice.answer':
       case 'voice.ice':
         this.handleVoiceSignal(socket, event);
+        return;
+      case 'stream.start':
+        this.handleStreamStart(socket, event);
+        return;
+      case 'stream.stop':
+        this.handleStreamStop(socket, String(event.roomId ?? ''));
+        return;
+      case 'stream.watch':
+        this.handleStreamWatch(socket, String(event.roomId ?? ''));
+        return;
+      case 'stream.unwatch':
+        this.handleStreamUnwatch(socket, String(event.roomId ?? ''));
+        return;
+      case 'stream.preset':
+        this.handleStreamPreset(socket, String(event.roomId ?? ''), event.preset);
+        return;
+      case 'stream.sync':
+        this.handleStreamSync(socket, String(event.roomId ?? ''));
+        return;
+      case 'stream.offer':
+      case 'stream.answer':
+      case 'stream.ice':
+        this.handleStreamSignal(socket, event);
         return;
       default:
         this.send(socket, { t: 'error', message: 'Unknown event' });

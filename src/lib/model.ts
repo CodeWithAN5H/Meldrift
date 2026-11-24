@@ -5,6 +5,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import type { StreamPreset } from '@shared/protocol';
 
 /* --------------------------------------------------------------------------
    Shared model types. These cross the Rust <-> React boundary; every field is
@@ -77,7 +78,8 @@ export interface Settings {
   pushToTalkKey: string;
   streamFps: number;
   streamHeight: number;
-  streamBitrateKbps: number;
+  /** Default quality preset for the next stream this host starts. */
+  streamPreset: StreamPreset;
   controlMode: ControlMode;
   /** Optional user-supplied ICE infrastructure. Empty means "use the server's". */
   voiceStunUrl: string;
@@ -154,9 +156,9 @@ export function defaultSettings(): Settings {
     autoGainControl: true,
     pushToTalk: false,
     pushToTalkKey: 'V',
-    streamFps: 60,
-    streamHeight: 1080,
-    streamBitrateKbps: 12000,
+    streamFps: 30,
+    streamHeight: 720,
+    streamPreset: 'auto',
     controlMode: 'single',
     voiceStunUrl: '',
     voiceTurnUrl: '',
@@ -194,9 +196,14 @@ export function sanitizeSettings(raw: Partial<Settings> | null | undefined): Set
       typeof raw.pushToTalkKey === 'string' && raw.pushToTalkKey.length <= 16
         ? raw.pushToTalkKey
         : base.pushToTalkKey,
-    streamFps: num(raw.streamFps, 15, 144, base.streamFps),
-    streamHeight: num(raw.streamHeight, 360, 2160, base.streamHeight),
-    streamBitrateKbps: num(raw.streamBitrateKbps, 500, 50000, base.streamBitrateKbps),
+    streamFps: num(raw.streamFps, 15, 60, base.streamFps),
+    streamHeight: num(raw.streamHeight, 360, 1080, base.streamHeight),
+    streamPreset:
+      raw.streamPreset === 'smooth' ||
+      raw.streamPreset === 'balanced' ||
+      raw.streamPreset === 'quality'
+        ? raw.streamPreset
+        : 'auto',
     controlMode: raw.controlMode === 'multi' ? 'multi' : 'single',
     voiceStunUrl: text(raw.voiceStunUrl, 512, base.voiceStunUrl),
     voiceTurnUrl: text(raw.voiceTurnUrl, 512, base.voiceTurnUrl),

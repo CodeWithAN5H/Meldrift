@@ -37,6 +37,10 @@ peer ──DTLS-SRTP──► remote track ──► <audio> element (audible)
   and a microphone `ended` event all stop capture and close peers. Rejoining
   creates a fresh capture stream and fresh connections; no duplicate microphone
   streams accumulate.
+- **Video coexistence (M4):** game streaming uses separate video-only peer
+  connections and never adds a video transceiver to a voice connection. Starting,
+  stopping or switching a stream does not renegotiate voice; spectators do not
+  need to be in the voice channel. See `docs/STREAMING.md`.
 
 ## Signaling flow
 

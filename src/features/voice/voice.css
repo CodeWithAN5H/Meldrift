@@ -265,6 +265,12 @@
   opacity: 0.35;
 }
 
+.md-dock__round[data-stream-host="true"] {
+  color: var(--red);
+  background: var(--red-wash);
+  border-color: rgba(242, 85, 95, 0.32);
+}
+
 .md-dock__round[data-active="true"] {
   color: #ffb4ba;
   background: rgba(242, 85, 95, 0.12);

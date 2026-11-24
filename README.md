@@ -6,10 +6,10 @@ A free Windows desktop app where friends gather in rooms, talk over voice, watch
 host's game live and take turns controlling it. No subscriptions, no ads, no
 premium tier.
 
-> **Status: `0.3.0-alpha.1`** — the permanent interface, the local workspace, the
-> self-hostable networking service and **real WebRTC voice** between signed-in
-> clients are working. Game streaming (M4) and remote control (M5) are not built;
-> anything absent is visibly marked as such in the app.
+> **Status: `0.4.0-alpha.1`** — the permanent interface, the local workspace, the
+> self-hostable networking service, **real WebRTC voice** and **live game/window
+> streaming** between signed-in clients are working. Remote control (M5) is not
+> built; anything absent is visibly marked as such in the app.
 
 ---
 
@@ -23,7 +23,7 @@ premium tier.
 | Settings (audio devices, PTT, stream prefs, appearance, data) | Working, persisted |
 | Accounts, rooms, chat, DMs, friends, presence across PCs | Working when signed in to a self-hosted signaling server (M2) |
 | Room voice (M3) | Working WebRTC/Opus mesh for up to 8 people: real capture, mute/deafen, push-to-talk, mic and output selection, input meter, real speaking and connection states, ICE restart and signaling reconnection |
-| Game/window capture and streaming | **Not built** (M4) |
+| Game/window streaming (M4) | Working real capture through WebView2 + Windows Graphics Capture, live WebRTC video to up to 4 viewers, window or entire-display source, adaptive Auto/Smooth/Balanced/Quality presets, real encoder/viewer stats, voice unaffected |
 | Remote input and control handoff | **Not built** (M5) |
 | Signed installer + releases | NSIS packaging and CI ready; signing needs a certificate |
 
@@ -31,6 +31,9 @@ Meldrift does not show fake peers, fake latency or a fake "connected" state. A
 voice participant is only shown as connected when their actual WebRTC peer
 connection reports `connected`, and a speaking ring only lights when received
 audio (or the local processed microphone signal) is above the speech threshold.
+Streaming shows the real captured surface, encoder resolution, frame rate,
+bitrate and dropped frames from WebRTC statistics; if frames stop, it says so
+instead of leaving a frozen picture marked live.
 
 ## Requirements
 
@@ -77,6 +80,21 @@ bun run start
 
 See `docs/VOICE.md` for coturn, ports, bandwidth and cost, and
 `docs/NETWORKING.md` / `server/README.md` for the service.
+
+## Streaming
+
+In a room, the host chooses **Share game window** or **Share entire display**.
+Windows' own picker selects the real surface; capture never starts before that
+explicit choice. Video is sent peer-to-peer on one video-only WebRTC connection
+per viewer, while voice keeps its separate connections. Up to **four viewers**
+are allowed because the host uploads one encoded stream per viewer (roughly
+3–8 Mbps each at the presets); larger audiences need an SFU, which is not part
+of M4.
+
+Quality presets are real: Auto adapts bitrate and resolution to loss, available
+bitrate and RTT; Smooth protects frame rate; Quality protects resolution.
+See `docs/STREAMING.md` for capture architecture, codecs, bandwidth, WebView2
+limits and troubleshooting. Native verification results are in `docs/STATUS.md`.
 
 ## Build the installer
 
