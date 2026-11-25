@@ -72,6 +72,8 @@ let token: string | null = null;
 let initializing = false;
 let activeServer = '';
 let iceServers: IceServerView[] = [];
+let probeTimer: ReturnType<typeof setTimeout> | null = null;
+let probing = false;
 /** peerId → conversationId, so DMs keep using the friend id as their scope. */
 const conversations = new Map<string, string>();
 const peersByConversation = new Map<string, string>();
@@ -235,8 +237,59 @@ export const useNetwork = create<NetworkState>((set, get) => ({
 /* ---- Connection lifecycle ---------------------------------------------- */
 
 function stopSocket(): void {
+  stopSessionProbe();
   if (socket) socket.stop();
   socket = null;
+}
+
+/**
+ * A rejected token cannot be repaired by reconnecting: the WebSocket handshake
+ * simply returns 401 again. While the channel is retrying, ask the HTTP API on
+ * a slow cadence whether this session still exists, so an expired or revoked
+ * session ends in a sign-in prompt instead of an endless "Reconnecting…".
+ */
+function startSessionProbe(): void {
+  if (probeTimer || probing || !token || !activeServer || !socket) return;
+  probeTimer = setTimeout(async () => {
+    probeTimer = null;
+    if (!token || !activeServer || !socket) return;
+    probing = true;
+    try {
+      await signalingApi.bootstrap(activeServer, token);
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        probing = false;
+        await expireSession();
+        return;
+      }
+    } finally {
+      probing = false;
+    }
+    if (token && socket && useNetwork.getState().status !== 'online') startSessionProbe();
+  }, 15_000);
+}
+
+function stopSessionProbe(): void {
+  if (probeTimer) clearTimeout(probeTimer);
+  probeTimer = null;
+}
+
+async function expireSession(): Promise<void> {
+  stopSocket();
+  clearInternal();
+  useNetwork.setState({
+    status: 'signed-out',
+    user: null,
+    error: 'Your session expired. Sign in again.',
+    requests: [],
+    presence: {},
+    members: {},
+  });
+  try {
+    await port.saveSession(null);
+  } catch {
+    // Nothing else to clear.
+  }
 }
 
 function clearInternal(): void {
@@ -287,21 +340,7 @@ async function establish(serverUrl: string, authToken: string, hintUser?: Public
     }
   } catch (error) {
     if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-      stopSocket();
-      clearInternal();
-      useNetwork.setState({
-        status: 'signed-out',
-        user: null,
-        error: 'Your session expired. Sign in again.',
-        requests: [],
-        presence: {},
-        members: {},
-      });
-      try {
-        await port.saveSession(null);
-      } catch {
-        // Nothing else to clear.
-      }
+      await expireSession();
       return;
     }
     useNetwork.setState({ status: 'offline', error: messageOf(error) });
@@ -322,6 +361,8 @@ function connectSocket(serverUrl: string, authToken: string): void {
               : 'offline';
       const current = useNetwork.getState();
       if (mapped === 'offline' && current.status === 'signed-out') return;
+      if (mapped === 'online') stopSessionProbe();
+      else if (mapped === 'reconnecting') startSessionProbe();
       useNetwork.setState({ status: mapped });
       useVoiceRoom.getState().onConnection(mapped);
       useStreamRoom.getState().onConnection(mapped);

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Guards against drift between the four places a version number lives.
- * A pushed tag must match the version, so a release can never be mislabelled.
+ * Guards against drift between every place a version number lives, including
+ * the server package and the Rust lockfile. A pushed tag must match the
+ * version, so a release can never be mislabelled.
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -10,11 +11,20 @@ const root = resolve(import.meta.dirname, '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const pkg = JSON.parse(read('package.json')).version;
+const server = JSON.parse(read('server/package.json')).version;
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json')).version;
 const cargo = read('src-tauri/Cargo.toml').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+const lock = read('src-tauri/Cargo.lock').match(/\[\[package\]\]\s*\nname = "meldrift"\s*\nversion = "([^"]+)"/)?.[1];
 const ts = read('src/lib/version.ts').match(/APP_VERSION\s*=\s*'([^']+)'/)?.[1];
 
-const seen = { 'package.json': pkg, 'tauri.conf.json': tauri, 'Cargo.toml': cargo, 'version.ts': ts };
+const seen = {
+  'package.json': pkg,
+  'server/package.json': server,
+  'tauri.conf.json': tauri,
+  'Cargo.toml': cargo,
+  'Cargo.lock': lock,
+  'version.ts': ts,
+};
 const unique = new Set(Object.values(seen));
 
 if (unique.size !== 1) {

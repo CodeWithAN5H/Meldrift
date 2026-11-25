@@ -279,6 +279,49 @@ describe('voice mesh', () => {
     expect(audio.srcObject).toBeNull();
   });
 
+  it('retains current participants and closes peers missing from a new roster', async () => {
+    const { mesh } = makeMesh();
+    await mesh.offerTo('peer-a');
+    await mesh.offerTo('peer-b');
+    const [first, second] = FakePeerConnection.instances;
+
+    mesh.retain(['peer-b', 'peer-c']);
+
+    expect(mesh.size).toBe(1);
+    expect(mesh.has('peer-a')).toBe(false);
+    expect(first.closed).toBe(true);
+    expect(mesh.has('peer-b')).toBe(true);
+    expect(second.closed).toBe(false);
+    mesh.closeAll();
+  });
+
+  it('can attempt another ICE restart after a failed restart attempt', async () => {
+    vi.useFakeTimers();
+    try {
+      const { mesh, sent } = makeMesh();
+      await mesh.offerTo('peer-a');
+      const pc = FakePeerConnection.instances[0];
+      expect(sent).toHaveLength(1);
+
+      pc.connectionState = 'failed';
+      pc.onconnectionstatechange?.();
+      await vi.advanceTimersByTimeAsync(1400);
+      expect(sent.filter((event) => event.t === 'voice.offer')).toHaveLength(2);
+
+      // The connection never recovered and fails again: ICE restart must still
+      // be available instead of being disabled for the rest of the call.
+      pc.connectionState = 'connecting';
+      pc.onconnectionstatechange?.();
+      pc.connectionState = 'failed';
+      pc.onconnectionstatechange?.();
+      await vi.advanceTimersByTimeAsync(1400);
+      expect(sent.filter((event) => event.t === 'voice.offer')).toHaveLength(3);
+      mesh.closeAll();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('replaces the outbound track on every sender when the device changes', async () => {
     const { mesh } = makeMesh();
     await mesh.offerTo('peer-a');

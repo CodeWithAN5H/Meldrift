@@ -1,6 +1,6 @@
 # Meldrift status
 
-Version: `0.5.0-alpha.1` · Updated: 2026-11-25
+Version: `0.6.0-alpha.1` · Updated: 2026-11-25
 
 ## Completed
 
@@ -116,8 +116,36 @@ Version: `0.5.0-alpha.1` · Updated: 2026-11-25
 - Gamepad forwarding and multiple simultaneous controllers are **not**
   implemented; see `docs/REMOTE_CONTROL.md`.
 
+**M6 — Reliability and verification**
+- Reconnect matrix exercised through the real UI: signaling restart, host and
+  viewer disconnect/reconnect, sign-out, app close, stream stop/restart and
+  room leave/rejoin. Both clients showed `Reconnecting…`, recovered on their
+  own and never left a frozen frame marked live.
+- Fixed four defects found during the review, each with a regression test:
+  a stale control target after a captured window closed, voice peers surviving
+  a roster change across a reconnect, ICE restart being disabled after one
+  failed attempt, and endless WebSocket retries against a revoked session
+  (now a slow HTTP probe signs out with “Your session expired”).
+- Performance profiles for idle, voice-only, stream host, host plus spectator,
+  voice plus stream plus spectator and voice plus stream plus control, with
+  real video statistics and process-tree CPU/memory.
+- A 35-minute soak of a voice + stream + spectator pair and an independent
+  voice-only pair, restarting the stream every ten minutes, with zero defects
+  detected across 34 samples.
+- Installer built for the release version and exercised as an upgrade over the
+  previous install; the recording is in `docs/M6_VERIFICATION.md` and the hash
+  is below under Distribution.
+
 **Distribution**
-- NSIS installer packaged as `artifacts/Meldrift-Setup.exe`.
+- NSIS installer packaged as `artifacts/Meldrift-Setup.exe` for
+  `0.6.0-alpha.1`: 1,839,322 bytes, SHA-256
+  `9d57c00a5588337b479dbca365784c7cccb6b33225c7941b4836fb09dce622a0`,
+  unsigned.
+- Installer upgrade verified on this machine: a fresh 0.5.0 install showed
+  first-run onboarding, saved a profile and reported `0.5.0-alpha.1` in About;
+  running the 0.6.0 installer over it replaced the binary, skipped onboarding on
+  next launch, kept the same profile and database, and reported
+  `0.6.0-alpha.1`. Uninstall was not exercised in this run.
 - Version consistency guard, SHA-256 manifest and build report scripts.
 - CI (typecheck, Vitest, Rust tests) and tag-driven release workflow that blocks
   publishing on any failed check; optional Authenticode signing.
@@ -127,12 +155,15 @@ Version: `0.5.0-alpha.1` · Updated: 2026-11-25
 Automated:
 
 - `bun run typecheck` — clean.
-- `bun run test` — **74 tests passing** across 6 files. M5 adds 18 tests:
-  physical key mapping and blocked shortcuts, input frame validation, mouse
-  coalescing and key ordering, held-input release, grant-token and sequence
-  gating, mouse-only rate limiting that still passes key transitions,
-  controller offer/hello/ICE/ack behaviour, host answer/activation/ack ordering,
-  channel close, wrong channel labels and the injection pump.
+- `bun run test` — **79 tests passing** across 6 files. M6 adds 5 regression
+  tests: control target selection (live id, closed id, captured-title and
+  first-visible fallbacks) and voice mesh roster retention plus a repeat ICE
+  restart after a failed attempt. The M5 group covers physical key mapping and
+  blocked shortcuts, input frame validation, mouse coalescing and key ordering,
+  held-input release, grant-token and sequence gating, mouse-only rate limiting
+  that still passes key transitions, controller offer/hello/ICE/ack behaviour,
+  host answer/activation/ack ordering, channel close, wrong channel labels and
+  the injection pump.
 - `cd server && bun test` — **45 integration tests passing** against a real
   HTTP + WebSocket server. M5 adds 10 control tests: stream/host/membership
   authorization, FIFO queue with deduplication and cap, approval/handoff with
@@ -227,6 +258,48 @@ and browser processes. The target's WinForms TextBox swallowed one right-button
 release while its context menu opened; the controller had sent both transitions
 and Meldrift releases held buttons on teardown.
 
+### M6 reliability run (2026-11-25)
+
+The full record, including the cross-PC checks that were not run, is in
+`docs/M6_VERIFICATION.md`. Automated verification on the changed tree:
+
+- `bun run typecheck` — clean.
+- `bun run test` — **79 tests passing** across 6 files.
+- `cd server && bun test` — **45 integration tests passing**.
+- `cargo test` — **9 tests passing, 1 ignored** (the native `SendInput` test).
+- `bun run app:build` / `bun run app:package` — release binary and NSIS
+  installer built for `0.6.0-alpha.1`.
+
+Two or three independent release instances ran against one production signaling
+service on loopback. Each had its own app-data directory and WebView2 profile
+and was driven through WebView2 DevTools with real mouse and key events.
+
+- **Reconnect:** killing and restarting signaling made both clients show
+  `Reconnecting…`, reconnect automatically, end the stream without a frozen
+  frame or LIVE badge, and rejoin voice with a live remote audio element.
+- **Lifecycle:** host close, viewer close, host sign-out and room leave/rejoin
+  each cleaned up the other side; a relaunched viewer decoded video again and a
+  relaunched host streamed again. Stopping a stream removed every `<video>` and
+  the LIVE badge on both sides.
+- **Remote-control target:** minimising and then closing the controlled window
+  ended the grant, cleared the armed target and told the controller
+  (“The game window was minimised.” / “The game window closed.”).
+- **Profiles:** idle 0.4%/439 MB host and 0.1%/430 MB viewer; voice-only
+  16.7%/505 MB and 14.8%/493 MB; host + spectator 42.8%/625 MB and
+  15.8%/526 MB at 1280×720 · 29 fps; voice + stream + spectator 55.9%/639 MB
+  and 29.1%/534 MB. The encoder dominated host CPU and Chromium chose software
+  encoding.
+- **Soak:** a voice + stream + spectator pair and an independent voice-only pair
+  ran for **35.4 minutes / 34 samples** with the stream restarted every ten
+  minutes. Video was still decoding at the end (1280×720, 8 fps, ~81 kbps),
+  one remote audio element was present on each side, both clients stayed
+  connected, memory stayed flat (host 608 MB, viewer 537 MB, voice peers
+  ~496–502 MB) and zero defects were detected.
+- **Limitation:** all clients ran on one PC over loopback with synthetic
+  microphone input; two physical machines, real NAT/TURN, physical input devices
+  and a Windows 10 clean install were not available. Those checks remain the
+  manual checklist in `docs/M6_VERIFICATION.md`.
+
 ### M4 native streaming run (same PC, separate WebView2 profiles)
 
 Three native release clients ran against one fresh signaling database:
@@ -287,8 +360,9 @@ separate app-data directories or two machines.
 
 ## In progress
 
-- Nothing. M5 is complete. Gamepad forwarding and multiple simultaneous
-  controllers remain future milestones and are not presented as available.
+- Nothing. M6 is complete. Gamepad forwarding, multiple simultaneous
+  controllers, TURN deployment and two-machine verification remain future work
+  and are not presented as available.
 
 ## Known bugs
 
@@ -377,14 +451,15 @@ separate app-data directories or two machines.
 
 ## Next steps
 
-1. **M5 follow-ups**: two-machine/real-network control run, physical keyboard
-   and mouse verification, elevated-game and raw-input compatibility matrix,
-   target-close native test, isolated CPU measurement under active control,
-   virtual-gamepad driver design (needs explicit approval).
-2. **M4 follow-ups**: two-machine/TURN verification, captured-window-close test,
-   hardware-encoder measurement, optional SFU experiment for more than four
-   viewers.
-3. **M3 follow-ups**: two-machine physical-mic test, per-participant volume,
-   TURN deployment guide validation against coturn.
-4. **M6**: profiling, soak tests, reconnect matrix, installer upgrade tests.
+1. **Two-machine verification**: the manual checklist in `docs/M6_VERIFICATION.md`
+   (register/friend/chat, real microphone and speakers, physical keyboard and
+   mouse through remote control, host network loss, sign-out and app close on a
+   real LAN, then STUN-only internet and a TURN relay).
+2. **M5 follow-ups**: elevated-game and raw-input compatibility matrix, a native
+   synthetic-keyboard delivery re-run, virtual-gamepad driver design (needs
+   explicit approval).
+3. **M4 follow-ups**: captured-window-close test, hardware-encoder measurement,
+   optional SFU experiment for more than four viewers.
+4. **M3 follow-ups**: per-participant volume, TURN deployment guide validation
+   against coturn.
 5. **M7**: signed releases on GitHub Releases.

@@ -18,6 +18,7 @@ import {
 import { useStreamRoom } from '@/state/streamRoom';
 import { ControlControllerSession, ControlHostSession } from '@/lib/control/session';
 import { controlDesktop, type ArmedTarget, type ControlTarget } from '@/lib/control/desktop';
+import { chooseTargetId } from '@/lib/control/targets';
 import { isBlockedCombination, keyStrokeFor } from '@/lib/control/keys';
 
 /* --------------------------------------------------------------------------
@@ -295,15 +296,9 @@ export const useControlRoom = create<ControlRoomState>((set, get) => ({
       // Prefer the window that is currently being streamed: granting control of
       // the picture everyone is watching is the least surprising choice.
       const captureLabel = useStreamRoom.getState().captureLabel ?? '';
-      const preferred =
-        get().targetId ||
-        (captureLabel
-          ? targets.find((target) =>
-              captureLabel.toLowerCase().includes(target.title.toLowerCase()),
-            )?.id
-          : undefined) ||
-        targets.find((target) => !target.minimized)?.id ||
-        '';
+      // A closed window must not stay selected: approval would arm an id that
+      // no longer exists and silently fail.
+      const preferred = chooseTargetId(targets, get().targetId, captureLabel);
       set({ targets, targetId: preferred, error: null });
     } catch (error) {
       set({ error: messageOf(error) });

@@ -19,10 +19,39 @@ import {
   ControlHostSession,
   type ControlClientSignal,
 } from '@/lib/control/session';
+import { chooseTargetId } from '@/lib/control/targets';
+import type { ControlTarget } from '@/lib/control/desktop';
 
 /* Remote-control client tests. The peer connections and data channels are
    fakes, so these verify protocol handling, ordering, release behaviour and
    authorization rather than real network or Windows injection. */
+
+const target = (id: string, title: string, minimized = false): ControlTarget => ({
+  id,
+  title,
+  process: 'game.exe',
+  minimized,
+});
+
+describe('control target selection', () => {
+  const targets = [target('window-1', 'RDR2'), target('window-2', 'Meldrift Target')];
+
+  it('keeps a still-open target selected', () => {
+    expect(chooseTargetId(targets, 'window-1', '')).toBe('window-1');
+  });
+
+  it('replaces a target id that no longer exists instead of arming a dead window', () => {
+    expect(chooseTargetId(targets, 'window-closed', '')).toBe('window-1');
+    expect(chooseTargetId([targets[1]], 'window-closed', 'Meldrift')).toBe('window-2');
+  });
+
+  it('falls back to the captured window title, then the first visible window', () => {
+    expect(chooseTargetId(targets, '', 'Playing RDR2')).toBe('window-1');
+    expect(
+      chooseTargetId([target('a', 'Minimised', true), target('b', 'Visible')], '', 'nothing'),
+    ).toBe('b');
+  });
+});
 
 const grant: ControlGrantView = {
   roomId: 'room-1',

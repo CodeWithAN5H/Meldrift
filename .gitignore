@@ -21,3 +21,6 @@ Thumbs.db
 artifacts/
 *.log
 server/data/
+
+# Local M6 verification data
+.m6-test/

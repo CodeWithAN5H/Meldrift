@@ -226,6 +226,18 @@ export class VoiceMesh {
     for (const userId of [...this.peers.keys()]) this.closePeer(userId);
   }
 
+  /**
+   * Drops peers that are no longer in the server's roster. A reconnect can
+   * replace the whole roster while peers from the old socket are still open;
+   * those must not keep an audio element, monitor and connection alive.
+   */
+  retain(userIds: Iterable<string>): void {
+    const keep = new Set(userIds);
+    for (const userId of [...this.peers.keys()]) {
+      if (!keep.has(userId)) this.closePeer(userId);
+    }
+  }
+
   /* ---- internals ------------------------------------------------------- */
 
   private ensurePeer(userId: string, offerer: boolean): Peer {
@@ -350,6 +362,7 @@ export class VoiceMesh {
     if (!peer.offerer || peer.restarting) return;
     peer.restarting = true;
     peer.restartTimer = setTimeout(async () => {
+      peer.restartTimer = null;
       if (!this.peers.has(peer.userId)) return;
       try {
         const offer = await peer.pc.createOffer({ iceRestart: true });
@@ -358,6 +371,10 @@ export class VoiceMesh {
         if (sdp) this.deps.send({ t: 'voice.offer', to: peer.userId, sdp });
       } catch {
         // The store surfaces the failed connection state; a later rejoin retries.
+      } finally {
+        // A failed restart may recover and fail again; one attempt must not
+        // disable ICE restart for the rest of the call.
+        peer.restarting = false;
       }
     }, 900 + Math.random() * 400);
   }

@@ -156,7 +156,7 @@ window no longer matches the armed target.
 - On approval, Meldrift arms the target in Rust (restoring it if minimised) and
   calls `SetForegroundWindow`, then creates the input session. The game is
   focused when the grant begins.
-- A focus watchdog samples the foreground window every 250 ms. While the target
+- A focus watchdog samples the foreground window every 400 ms. While the target
   is foreground, injected input flows.
 - **Focus lost** (the host alt-tabs, or Meldrift itself is brought forward to
   revoke): injection pauses, every held key/button is released, and the host and
@@ -285,6 +285,12 @@ the host's real control state rather than a simulated latency number.
 - **Two clients on one PC** share one WebView2 profile and one Tauri app-data
   database by default. Two instances require separate `MELDRIFT_DATA_DIR` and
   `WEBVIEW2_USER_DATA_FOLDER` values, and are not a substitute for two PCs.
+- M6 re-verified host approval, controller connection, target minimise (host:
+  “The game window was minimised.”) and target close (“The game window
+  closed.”). In both cases the grant ended, the controller was notified and no
+  armed window remained. M6 did not reproduce synthetic keyboard delivery to
+  the target; that path is covered by the M5 native run and the Rust/unit
+  tests. See `docs/M6_VERIFICATION.md`.
 - **The native test drove the UI and browser input through WebView2's DevTools
   protocol** (DOM clicks, `Input.dispatchKeyEvent`/`dispatchMouseEvent`) while
   the app used its real data channel and Rust injected with real `SendInput`.

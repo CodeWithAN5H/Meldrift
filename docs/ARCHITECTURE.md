@@ -1,8 +1,8 @@
 # Meldrift architecture
 
-Status: `0.5.0-alpha.1` (M0–M5 complete: foundation, permanent UI, the M2
-networking foundation, M3 real-time voice, M4 game streaming and M5 remote
-control with player handoff).
+Status: `0.6.0-alpha.1` (M0–M6 complete: foundation, permanent UI, the M2
+networking foundation, M3 real-time voice, M4 game streaming, M5 remote control
+with player handoff, and the M6 reliability and verification pass).
 
 ## Stack decisions
 
@@ -222,9 +222,14 @@ Rust (lengths, enum values, scope ownership) and again in TS before submit.
   jitter buffering run inside Chromium's media pipeline; only a 120 ms analyser
   tick and a 250 ms speaking-state throttle touch the client stores. Chat and
   panel updates cannot block encoding or playback. `getStats` is not polled.
-- **Measured, not claimed.** Idle CPU/memory numbers will be recorded in
-  `docs/STATUS.md` once profiling hardware runs are captured; none are asserted
-  yet.
+- **Measured, not claimed.** M6 recorded idle, voice, host, spectator,
+  voice+stream and control profiles on the development machine, plus a 35-minute
+  soak. The hardware, method and numbers are in `docs/M6_VERIFICATION.md`; they
+  are not presented as universal hardware requirements.
+- **Reconnect is repair, not hope.** A dropped socket reports `reconnecting`,
+  re-fetches the authoritative roster and stream session, then closes peers that
+  the new roster or stream no longer contains. A revoked token is detected by a
+  slow HTTP session probe instead of retrying a 401 handshake forever.
 
 ## Windows specifics
 
@@ -242,32 +247,40 @@ Rust (lengths, enum values, scope ownership) and again in TS before submit.
   signaling server address is user-configured; that is the documented trade-off
   for self-hosting, and scripts remain restricted to `'self'`.
 
-## Security model for remote input (planned, M5)
+## Security model for remote input (implemented, M5)
 
-Design constraints fixed now so later code cannot quietly weaken them:
+Input forwarding exists only inside an explicit host grant:
 
-1. Input forwarding runs only while a **session grant token** issued by the host
-   is valid, scoped to one room, one controller, one expiry.
-2. The host process is the only authority: it maintains the allow-list, revokes
-   on disconnect, and exposes an emergency stop (hotkey + dock control).
-3. All injected input is normalised through a validator (key allow-list, absolute
-   pointer clamping to the captured window rectangle) before reaching
-   `SendInput`.
-4. Grants are dropped on stream end, room leave, host lock, and app shutdown;
-   input state (pressed keys/buttons) is released so nothing sticks.
-5. Transport is WebRTC DataChannel with DTLS; signalling is authenticated (the
-   M2 service already issues sessions and enforces room membership).
-6. No anti-cheat bypass, DRM circumvention or process manipulation — only
-   OS-level input APIs the user is entitled to use.
+1. The signaling service owns authority. The streaming host enables control for
+   one named window, approves each controller from a FIFO queue, and can revoke
+   or hand off. A grant has a random id, a 192-bit input token delivered only to
+   the host and that controller, and a short expiry.
+2. Signalling is relayed only between the current host socket and the current
+   controller, with direction checks, SDP/ICE size limits and a per-socket rate
+   limit. Revoked grant ids cannot be replayed.
+3. Input travels on a dedicated ordered/reliable WebRTC data channel from the
+   controller to the host. It never passes through the signaling service.
+4. Rust refuses injection unless the chosen window is armed, still exists, is
+   foreground and is not paused. A 400 ms watchdog pauses injection and releases
+   held keys/buttons when focus leaves; closing or minimising the target
+   invalidates the arm.
+5. Every teardown path — revoke, release, handoff, either socket closing, stream
+   stop, room leave, sign-out, target close/minimise, app exit — closes the
+   channel and releases held input. `Ctrl+Alt+F12` is a global emergency stop.
+6. Injection uses ordinary Win32 `SendInput`. Meldrift does not bypass DRM,
+   anti-cheat or OS integrity boundaries, and cannot inject into elevated
+   windows from a non-elevated process.
 
 ## Known architectural risks
 
 - **Relay bandwidth is the real cost.** P2P covers one host to a few viewers;
   group fan-out needs an SFU. Self-hostable (LiveKit/mediasoup), but hosting is
   not free. Adaptive bitrate and subscriber caps must be honest in the UI.
-- **Capture needs native code.** `Windows.Graphics.Capture` plus Media Foundation
-  H.264 is the target; WebView2 screen capture alone cannot meet the latency and
-  quality bar.
+- **Capture is WebView2's.** `getDisplayMedia` uses Chromium/Windows Graphics
+  Capture and the browser's encoder choice. It works for ordinary windows and
+  displays, but protected content and some exclusive-fullscreen surfaces cannot
+  be captured. A future native capture path would trade that compatibility for
+  codec and latency control; it is not needed for the current viewer caps.
 - **Input injection vs. elevated games.** A non-elevated app cannot inject into an
   elevated process. This is a Windows limitation to document, not bypass.
 - **Anti-cheat titles** may block synthetic input; Meldrift will state that

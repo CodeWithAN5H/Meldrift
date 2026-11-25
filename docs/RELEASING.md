@@ -8,13 +8,14 @@ Semantic versioning with prerelease tags:
 0.1.0-alpha.1  →  0.1.0-alpha.2  →  0.1.0-beta.1  →  1.0.0
 ```
 
-The version appears in five files and must match everywhere:
+The version appears in six files and must match everywhere:
 
 1. `package.json`
 2. `server/package.json`
 3. `src-tauri/tauri.conf.json`
 4. `src-tauri/Cargo.toml`
-5. `src/lib/version.ts`
+5. `src-tauri/Cargo.lock` (the `meldrift` package entry)
+6. `src/lib/version.ts`
 
 `node scripts/check-version.mjs` fails the build if they drift, and also fails
 when a pushed tag (`v0.1.0-alpha.1`) does not match the version.
@@ -57,7 +58,7 @@ unsigned and the release notes say so.
 
 ## Publishing
 
-1. Update the five version files.
+1. Update the six version files.
 2. Commit, tag `v<version>`, push the tag.
 3. `.github/workflows/release.yml` runs typecheck, Vitest, Rust tests, the
    release build and packaging. Any failure stops the job before upload, so a

@@ -6,12 +6,13 @@ A free Windows desktop app where friends gather in rooms, talk over voice, watch
 host's game live and take turns controlling it. No subscriptions, no ads, no
 premium tier.
 
-> **Status: `0.5.0-alpha.1`** — the permanent interface, the local workspace, the
+> **Status: `0.6.0-alpha.1`** — the permanent interface, the local workspace, the
 > self-hostable networking service, **real WebRTC voice**, **live game/window
-> streaming** and **host-approved remote keyboard/mouse control with player
-> handoff** between signed-in clients are working. Gamepad forwarding and
-> multiple simultaneous controllers are future milestones; anything absent is
-> visibly marked as such in the app.
+> streaming**, **host-approved remote keyboard/mouse control with player
+> handoff** and the **M6 reliability pass** (reconnect recovery, leak and
+> lifecycle fixes, profiling, soak and installer testing) between signed-in
+> clients are working. Gamepad forwarding and multiple simultaneous controllers
+> are future milestones; anything absent is visibly marked as such in the app.
 
 ---
 
@@ -27,6 +28,7 @@ premium tier.
 | Room voice (M3) | Working WebRTC/Opus mesh for up to 8 people: real capture, mute/deafen, push-to-talk, mic and output selection, input meter, real speaking and connection states, ICE restart and signaling reconnection |
 | Game/window streaming (M4) | Working real capture through WebView2 + Windows Graphics Capture, live WebRTC video to up to 4 viewers, window or entire-display source, adaptive Auto/Smooth/Balanced/Quality presets, real encoder/viewer stats, voice unaffected |
 | Remote input and control handoff (M5) | Working: real Win32 `SendInput` for keyboard, mouse buttons, movement and wheel; host-selected target window, one controller at a time with a FIFO queue, explicit approval, instant revoke/retake, emergency stop (`Ctrl+Alt+F12`), automatic release on every disconnect/stream-stop/app-exit path. Focus-based, not a security sandbox. |
+| Reliability and soak (M6) | Working: reconnect matrix, stream/voice/control lifecycle cleanup, revoked-session detection, 35-minute two-pair soak, CPU/memory profiles and an installer upgrade test. Results and limitations in `docs/M6_VERIFICATION.md`. |
 | Gamepad forwarding | **Not built** — requires a privileged virtual-gamepad driver; documented future work |
 | Signed installer + releases | NSIS packaging and CI ready; signing needs a certificate |
 

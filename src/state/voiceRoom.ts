@@ -326,6 +326,7 @@ export const useVoiceRoom = create<VoiceRoomState>((set, get) => ({
         joined = true;
         set({ joining: false, status: 'joining', error: null });
 
+        const previous = get().participants;
         const participants: Record<string, VoicePeer> = {};
         for (const participant of event.participants) {
           const previous = get().participants[participant.userId];
@@ -336,6 +337,9 @@ export const useVoiceRoom = create<VoiceRoomState>((set, get) => ({
           };
         }
         set({ participants });
+        // The acknowledgement is the authoritative roster: peers for people
+        // who left while this socket was down must not survive it.
+        mesh?.retain(Object.keys(participants));
         refreshStatus();
         sendState(true);
 
@@ -343,7 +347,7 @@ export const useVoiceRoom = create<VoiceRoomState>((set, get) => ({
         // client offers. Existing peers from a previous socket are discarded:
         // the other side saw the disconnect and closed them.
         for (const participant of event.participants) {
-          if (rejoinPending) mesh?.closePeer(participant.userId);
+          if (rejoinPending || previous[participant.userId]) mesh?.closePeer(participant.userId);
           void mesh?.offerTo(participant.userId);
         }
         rejoinPending = false;
