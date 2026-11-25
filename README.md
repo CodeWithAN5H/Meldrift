@@ -6,7 +6,7 @@ A free Windows desktop app where friends gather in rooms, talk over voice, watch
 host's game live and take turns controlling it. No subscriptions, no ads, no
 premium tier.
 
-> **Status: `0.6.0-alpha.1`** — the permanent interface, the local workspace, the
+> **Status: `0.6.0-alpha.2`** — the permanent interface, the local workspace, the
 > self-hostable networking service, **real WebRTC voice**, **live game/window
 > streaming**, **host-approved remote keyboard/mouse control with player
 > handoff** and the **M6 reliability pass** (reconnect recovery, leak and

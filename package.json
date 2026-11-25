@@ -1,7 +1,7 @@
 {
   "name": "meldrift",
   "private": true,
-  "version": "0.6.0-alpha.1",
+  "version": "0.6.0-alpha.2",
   "type": "module",
   "description": "Meldrift — Your game. Everyone's turn.",
   "scripts": {

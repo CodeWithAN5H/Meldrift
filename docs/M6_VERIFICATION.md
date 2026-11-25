@@ -114,9 +114,10 @@ every ten minutes.
 
 | Check | Result |
 | --- | --- |
-| Installer built for the release | **Verified** — `artifacts/Meldrift-Setup.exe`, 1,839,322 bytes, SHA-256 `9d57c00a5588337b479dbca365784c7cccb6b33225c7941b4836fb09dce622a0` |
+| Installer built for the release | **Verified** — `artifacts/Meldrift-Setup.exe` for `0.6.0-alpha.2`, 1,841,858 bytes, SHA-256 `49771ebf5a935f94eba60f969f81691756b83556f6875e603ef402c5bb8b5f48` (the alpha.1 installer used for the rows below was superseded by the invisible-startup fix) |
 | Fresh install, first run | **Verified** — onboarding shown, profile saved |
 | Upgrade 0.5.0 → 0.6.0 over the existing install | **Verified** — binary replaced, onboarding skipped, same profile and database loaded, About reported `0.6.0-alpha.1` |
+| Upgrade 0.6.0-alpha.1 → 0.6.0-alpha.2 | **Verified** — binary replaced, app opened with a visible window, About reported `0.6.0-alpha.2` |
 | Uninstall and reinstall | **Not verified** |
 | Installer signing | **Not verified** — the installer is unsigned; no certificate is configured |
 

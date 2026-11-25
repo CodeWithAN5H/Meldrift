@@ -1,6 +1,6 @@
 # Meldrift status
 
-Version: `0.6.0-alpha.1` · Updated: 2026-11-25
+Version: `0.6.0-alpha.2` · Updated: 2026-11-26
 
 ## Completed
 
@@ -138,14 +138,18 @@ Version: `0.6.0-alpha.1` · Updated: 2026-11-25
 
 **Distribution**
 - NSIS installer packaged as `artifacts/Meldrift-Setup.exe` for
-  `0.6.0-alpha.1`: 1,839,322 bytes, SHA-256
-  `9d57c00a5588337b479dbca365784c7cccb6b33225c7941b4836fb09dce622a0`,
+  `0.6.0-alpha.2`: 1,841,858 bytes, SHA-256
+  `49771ebf5a935f94eba60f969f81691756b83556f6875e603ef402c5bb8b5f48`,
   unsigned.
 - Installer upgrade verified on this machine: a fresh 0.5.0 install showed
   first-run onboarding, saved a profile and reported `0.5.0-alpha.1` in About;
   running the 0.6.0 installer over it replaced the binary, skipped onboarding on
   next launch, kept the same profile and database, and reported
   `0.6.0-alpha.1`. Uninstall was not exercised in this run.
+- `0.6.0-alpha.2` was installed over `0.6.0-alpha.1` with the default app-data
+  directory: the binary was replaced, the app opened with a visible 1456×909
+  window (`WS_VISIBLE`, `WS_EX_APPWINDOW`), and About reported
+  `0.6.0-alpha.2`.
 - Version consistency guard, SHA-256 manifest and build report scripts.
 - CI (typecheck, Vitest, Rust tests) and tag-driven release workflow that blocks
   publishing on any failed check; optional Authenticode signing.
@@ -363,6 +367,30 @@ separate app-data directories or two machines.
 - Nothing. M6 is complete. Gamepad forwarding, multiple simultaneous
   controllers, TURN deployment and two-machine verification remain future work
   and are not presented as available.
+
+## Fixed after the 0.6.0-alpha.1 tag
+
+- **Invisible startup (`0.6.0-alpha.2`).** The installed alpha.1 app stayed
+  running with no window, taskbar entry or error. Reproduced with the installed
+  build: the process, its `Tauri Window` (1456×909, on-screen) and WebView2 were
+  all alive, the page-load hook fired and rendered the interface, but the window
+  had `WS_VISIBLE` unset. `Builder::on_page_load` hands the callback a
+  `tauri::Webview`, and `Webview::show()` only shows the embedded WebView2
+  controller — it never shows the OS window. The reveal now goes through
+  `tauri::Window` (typed so the wrong call cannot compile back in), and a
+  five-second watchdog shows the window with an explicit failure title if no
+  page loads. Startup diagnostics are written to `meldrift-startup.log` next to
+  the database. Regression tests cover the watchdog; the window path is fixed
+  at the type level and verified natively.
+
+  Verified on the bundled release and the installed build: three consecutive
+  launch/close cycles, launch after a hard kill, launch maximised, and launch
+  after the alpha.1 → alpha.2 upgrade all produced a visible, on-screen
+  `Tauri Window` with a taskbar-eligible extended style. The page-load hook ran
+  within ~20 ms of process start and `window visible after reveal: true` was
+  logged every time. Two instances launched together also both received visible
+  windows; Meldrift still has no single-instance guard (a pre-existing
+  limitation, not the cause of this bug). See `docs/M6_VERIFICATION.md`.
 
 ## Known bugs
 

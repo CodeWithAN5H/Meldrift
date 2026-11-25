@@ -1,6 +1,6 @@
 # Meldrift architecture
 
-Status: `0.6.0-alpha.1` (M0–M6 complete: foundation, permanent UI, the M2
+Status: `0.6.0-alpha.2` (M0–M6 complete: foundation, permanent UI, the M2
 networking foundation, M3 real-time voice, M4 game streaming, M5 remote control
 with player handoff, and the M6 reliability and verification pass).
 
@@ -236,7 +236,12 @@ Rust (lengths, enum values, scope ownership) and again in TS before submit.
 - Frameless window with custom caption buttons; `data-tauri-drag-region` for
   dragging, double-click to maximise via the native toggle.
 - Dark `backgroundColor` plus a `visible: false` window that is shown on page
-  load, so there is no white flash.
+  load, so there is no white flash. The reveal goes through `tauri::Window`,
+  never `Webview`: `Webview::show` only makes the embedded WebView2 controller
+  visible and leaves the OS window hidden with no taskbar entry
+  (`0.6.0-alpha.1` shipped that mistake). A five-second watchdog reveals the
+  window with an error title if no page ever loads, so a broken runtime cannot
+  leave a silent process behind.
 - WebView2 asks for microphone permission on the first join; denying it is
   handled as a real capture error (voice is not joined, and the app says the
   microphone is unavailable). The prompt is per WebView2 profile.
