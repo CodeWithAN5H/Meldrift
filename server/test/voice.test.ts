@@ -143,7 +143,7 @@ describe('voice ICE configuration', () => {
     const unauthenticated = await api('/api/voice/ice');
     expect(unauthenticated.status).toBe(401);
 
-    const user = await registerUser('Ansh');
+    const user = await registerUser('Player One');
     const config = await api('/api/voice/ice', {}, user.token);
     expect(config.status).toBe(200);
     expect(config.data.maxParticipants).toBe(8);
@@ -207,7 +207,7 @@ describe('voice membership and authorization', () => {
   });
 
   it('rejects unknown rooms and never echoes the roster to a non-member', async () => {
-    const user = await registerUser('Ansh');
+    const user = await registerUser('Player One');
     const socket = await connect(user.token);
     await waitFor(socket.events, (event) => event.t === 'ready');
 
@@ -219,7 +219,7 @@ describe('voice membership and authorization', () => {
   });
 
   it('announces joins with real names and separate room membership', async () => {
-    const host = await registerUser('Native Ansh');
+    const host = await registerUser('Native Player');
     const guest = await registerUser('Native Rohan');
     const room = await createRoom(host.token);
     await joinRoom(guest.token, room.inviteCode);
@@ -236,7 +236,7 @@ describe('voice membership and authorization', () => {
     const guestJoined = await voiceJoined(guestSocket);
     expect(guestJoined.t === 'voice.joined' && guestJoined.participants).toHaveLength(1);
     const peer = guestJoined.t === 'voice.joined' ? guestJoined.participants[0] : null;
-    expect(peer?.displayName).toBe('Native Ansh');
+    expect(peer?.displayName).toBe('Native Player');
     expect(peer?.muted).toBe(false);
     expect(peer?.speaking).toBe(false);
 

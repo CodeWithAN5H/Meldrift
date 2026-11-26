@@ -1,27 +1,46 @@
 name: Release
 
+# A tag push builds, tests and verifies the release, attaches the four
+# verified assets to a DRAFT GitHub Release, and only then publishes that same
+# draft. Nothing becomes public until every check and every upload has
+# succeeded, and an alpha/beta tag is always published as a prerelease.
+# A manual run with publish=false performs the whole build, signing, checksum
+# and verification path without creating any release.
+
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      draft:
-        description: Publish as a draft release
+      tag:
+        description: 'Existing version tag to build (for example v0.7.0-alpha.1)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish a public release. Leave false to validate only.'
+        required: true
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: Build and publish Meldrift-Setup.exe
+    name: Build, verify and publish
     runs-on: windows-latest
     env:
       SIGN_PFX_BASE64: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PFX_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
+
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -33,10 +52,26 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Resolve and validate the release tag
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          if ($tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(alpha|beta)\.(0|[1-9]\d*))?$') {
+            throw "Tag '$tag' is not a supported release tag (expected v<major>.<minor>.<patch>[-alpha.N|-beta.N])."
+          }
+          "MELDRIFT_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Output "Release tag: $tag"
+          Write-Output "Signing configured: $(-not [string]::IsNullOrWhiteSpace($env:SIGN_PFX_BASE64))"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify version matches the tag
+      - name: Install server dependencies
+        working-directory: server
+        run: bun install --frozen-lockfile
+
+      - name: Check version consistency
         run: node scripts/check-version.mjs
 
       - name: Typecheck
@@ -45,37 +80,67 @@ jobs:
       - name: Frontend tests
         run: bun run test
 
+      # The Rust crate embeds the sidecar through tauri.conf.json externalBin,
+      # so the binary must exist before any cargo test/build. CI does the same.
+      - name: Build signaling sidecar
+        run: bun run server:build
+
+      - name: Packaged sidecar lifecycle test
+        run: bun run server:test:packaged
+
+      - name: Server tests
+        working-directory: server
+        run: bun test
+
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
-      # A release is never produced from a failing build: every step above is
-      # blocking, and the bundler itself fails on a compile error.
-      - name: Build installer
-        run: bun run tauri build
+      - name: Build application executable (no bundle yet)
+        run: bun run tauri build --no-bundle
 
-      - name: Package Meldrift-Setup.exe
+      - name: Decode signing certificate
+        if: env.SIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "meldrift-signing.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+          "SIGN_PFX_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Sign application executable
+        if: env.SIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./scripts/sign.ps1 -Path 'src-tauri/target/release/meldrift.exe' -Require
+
+      - name: Bundle installer (unsigned build)
+        if: env.SIGN_PFX_BASE64 == ''
+        run: bun run tauri bundle --no-binary-patching --no-sign
+
+      - name: Bundle installer with the signed executable
+        if: env.SIGN_PFX_BASE64 != ''
+        run: bun run tauri bundle --no-binary-patching --no-sign
+
+      - name: Sign installer
+        if: env.SIGN_PFX_BASE64 != ''
+        shell: pwsh
+        run: ./scripts/sign.ps1 -Require
+
+      - name: Record unsigned status explicitly
+        if: env.SIGN_PFX_BASE64 == ''
+        shell: pwsh
+        run: ./scripts/sign.ps1
+
+      - name: Package installer and checksum
+        env:
+          MELDRIFT_REQUIRE_SIGNING: ${{ secrets.SIGN_PFX_BASE64 != '' && '1' || '0' }}
         run: node scripts/package.mjs
 
-      - name: Sign installer (only when a certificate secret exists)
-        if: ${{ env.SIGN_PFX_BASE64 != '' }}
-        shell: pwsh
-        run: |
-          $path = Join-Path $env:RUNNER_TEMP "meldrift.pfx"
-          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
-          $env:SIGN_PFX_PATH = $path
-          ./scripts/sign.ps1
+      - name: Generate release notes
+        run: node scripts/release-notes.mjs
 
-      - name: Validate release assets
-        shell: pwsh
-        run: |
-          $exe = "artifacts/Meldrift-Setup.exe"
-          if (-not (Test-Path $exe)) { throw "Meldrift-Setup.exe missing" }
-          $size = (Get-Item $exe).Length
-          if ($size -lt 1MB) { throw "Installer looks truncated ($size bytes)" }
-          $bytes = [IO.File]::ReadAllBytes($exe)[0..1]
-          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Installer is not a PE executable" }
-          Get-Content artifacts/build-report.json
-          Get-Content artifacts/SHA256SUMS.txt
+      - name: Verify release assets
+        env:
+          MELDRIFT_REQUIRE_SIGNING: ${{ secrets.SIGN_PFX_BASE64 != '' && '1' || '0' }}
+        run: node scripts/verify-release.mjs
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
@@ -85,27 +150,42 @@ jobs:
             artifacts/Meldrift-Setup.exe
             artifacts/SHA256SUMS.txt
             artifacts/build-report.json
+            artifacts/RELEASE_NOTES.md
           if-no-files-found: error
 
-      - name: Publish GitHub Release
+      # Phase 1: attach every verified asset to a draft. If any upload is
+      # missing or fails, the job stops here and nothing is public.
+      - name: Attach verified assets to a draft release
+        if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v3
         with:
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
-          generate_release_notes: true
-          body: |
-            Meldrift `${{ github.ref_name }}` for Windows 10/11 (64-bit).
-
-            **Install:** run `Meldrift-Setup.exe`. It installs per user, creates a
-            Start Menu shortcut, offers a desktop shortcut, and registers an
-            uninstaller in Apps & features.
-
-            **Integrity:** see `SHA256SUMS.txt`.
-
-            **Signing:** this build is Authenticode-signed only when the release
-            job had a signing certificate configured; the signature state is
-            recorded in `build-report.json`.
+          tag_name: ${{ env.MELDRIFT_TAG }}
+          name: Meldrift ${{ env.MELDRIFT_TAG }}
+          body_path: artifacts/RELEASE_NOTES.md
+          draft: true
+          prerelease: ${{ contains(env.MELDRIFT_TAG, 'alpha') || contains(env.MELDRIFT_TAG, 'beta') }}
+          fail_on_unmatched_files: true
           files: |
             artifacts/Meldrift-Setup.exe
             artifacts/SHA256SUMS.txt
             artifacts/build-report.json
+            artifacts/RELEASE_NOTES.md
+
+      # Phase 2: publish the draft that already holds all four assets. A failed
+      # upload above means this step never runs, so no incomplete release can
+      # appear on the releases page.
+      - name: Publish the verified release
+        if: github.event_name == 'push' || inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.MELDRIFT_TAG }}
+          name: Meldrift ${{ env.MELDRIFT_TAG }}
+          body_path: artifacts/RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(env.MELDRIFT_TAG, 'alpha') || contains(env.MELDRIFT_TAG, 'beta') }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/Meldrift-Setup.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/build-report.json
+            artifacts/RELEASE_NOTES.md

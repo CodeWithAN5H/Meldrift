@@ -9,9 +9,9 @@ premium tier.
 > **Status: `0.7.0-alpha.1`** — the permanent interface, the local workspace, the
 > self-hostable networking service, **real WebRTC voice**, **live game/window
 > streaming**, **host-approved remote keyboard/mouse control with player
-> handoff**, the **M6 reliability pass** and the **P0 signaling deployment fix**
-> (a bundled local server that starts with the app, plus an explicit
-> remote-server mode) are working. Gamepad forwarding and
+> handoff**, the **M6 reliability pass**, the **M7 release pipeline** and the
+> **P0 signaling deployment fix** (a bundled local server that starts with the
+> app, plus an explicit remote-server mode) are working. Gamepad forwarding and
 > multiple simultaneous controllers are future milestones; anything absent is
 > visibly marked as such in the app.
 
@@ -32,6 +32,7 @@ premium tier.
 | Remote input and control handoff (M5) | Working: real Win32 `SendInput` for keyboard, mouse buttons, movement and wheel; host-selected target window, one controller at a time with a FIFO queue, explicit approval, instant revoke/retake, emergency stop (`Ctrl+Alt+F12`), automatic release on every disconnect/stream-stop/app-exit path. Focus-based, not a security sandbox. |
 | Reliability and soak (M6) | Working: reconnect matrix, stream/voice/control lifecycle cleanup, revoked-session detection, 35-minute two-pair soak, CPU/memory profiles and an installer upgrade test. Results and limitations in `docs/M6_VERIFICATION.md`. |
 | Gamepad forwarding | **Not built** — requires a privileged virtual-gamepad driver; documented future work |
+| Release pipeline (M7) | Working: tag-driven release workflow, version/tag validation, full test gates, two-stage signing hook, checksum and signature verification, generated release notes and draft-then-publish GitHub Releases. Builds are **unsigned** until a certificate is configured. |
 
 Meldrift does not show fake peers, fake latency or a fake "connected" state. A
 voice participant is only shown as connected when their actual WebRTC peer
@@ -137,6 +138,13 @@ bun run app:package
 
 Output: `artifacts/Meldrift-Setup.exe` (unsigned unless signing is configured —
 see `docs/RELEASING.md`).
+
+Release builds are produced by the tag-driven GitHub Actions workflow. It
+validates the tag, runs every test suite, builds and signs the executable
+before bundling, signs the installer when a certificate is configured, verifies
+the checksum and signature, attaches every verified asset to a draft GitHub
+Release and publishes that draft as a prerelease for an alpha/beta tag. See
+`docs/RELEASING.md` for the certificate secrets and the validation-only path.
 
 ## Tests
 

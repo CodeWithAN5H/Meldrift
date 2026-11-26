@@ -28,7 +28,7 @@ beforeEach(async () => {
     configurable: true,
   });
   await webPort.clearWorkspace();
-  await webPort.saveProfile(makeProfile('Ansh'));
+  await webPort.saveProfile(makeProfile('Player One'));
 });
 
 describe('workspace port', () => {

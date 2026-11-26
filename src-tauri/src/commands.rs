@@ -797,8 +797,8 @@ mod tests {
             &db,
             Profile {
                 id: "player-1".into(),
-                display_name: "Ansh".into(),
-                handle: "ansh".into(),
+                display_name: "Player One".into(),
+                handle: "player_one".into(),
                 avatar_color: "#7c4df2".into(),
                 bio: String::new(),
                 created_at: 1,
@@ -814,7 +814,7 @@ mod tests {
         let payload = serde_json::json!({
             "serverUrl": "http://127.0.0.1:8787",
             "token": "token-value",
-            "user": { "id": "player-1", "username": "ansh" }
+            "user": { "id": "player-1", "username": "player_one" }
         });
         save_session_inner(&db, Some(payload.clone())).expect("save session");
         assert_eq!(load_session_inner(&db).expect("load session"), Some(payload));
@@ -849,7 +849,7 @@ mod tests {
         let message =
             send_message_inner(&db, "room", &room.id, "  who's playing next?  ").expect("message");
         assert_eq!(message.body, "who's playing next?");
-        assert_eq!(message.author_name, "Ansh");
+        assert_eq!(message.author_name, "Player One");
 
         let conn = lock(&db).expect("lock");
         let messages = {

@@ -4,6 +4,7 @@ import { useWorkspace } from '@/state/workspace';
 import { MeldriftMark } from '@/icons/MeldriftMark';
 import { Button, Field } from '@/components/ui';
 import { AVATAR_COLORS, vars } from '@/lib/model';
+import { DISPLAY_NAME_PLACEHOLDER } from '@/lib/profileText';
 import './onboarding.css';
 
 export function Onboarding() {
@@ -55,7 +56,7 @@ export function Onboarding() {
               value={name}
               maxLength={32}
               autoFocus
-              placeholder="Ansh"
+              placeholder={DISPLAY_NAME_PLACEHOLDER}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void start();

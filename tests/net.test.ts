@@ -34,7 +34,7 @@ function message(overrides: Partial<Message> & Pick<Message, 'id' | 'createdAt'>
     scopeType: 'room',
     scopeId: 'room-1',
     authorId: 'user-1',
-    authorName: 'Ansh',
+    authorName: 'Player One',
     body: 'hello',
     ...overrides,
   };

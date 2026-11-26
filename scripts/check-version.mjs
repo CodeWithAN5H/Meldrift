@@ -41,9 +41,24 @@ const refType = process.env.GITHUB_REF_TYPE;
 const ref = process.env.GITHUB_REF ?? '';
 const isTagRef = refType === 'tag' || (refType === undefined && ref.startsWith('refs/tags/'));
 const tag = isTagRef ? process.env.GITHUB_REF_NAME || ref.replace(/^refs\/tags\//, '') : process.env.MELDRIFT_TAG ?? '';
-if (tag && tag.replace(/^v/, '') !== pkg) {
-  console.error(`Tag ${tag} does not match version ${pkg}.`);
+
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(-(alpha|beta)\.\d+)?$/;
+const TAG_PATTERN = /^v\d+\.\d+\.\d+(-(alpha|beta)\.\d+)?$/;
+
+if (!VERSION_PATTERN.test(pkg)) {
+  console.error(`Version ${pkg} is not a supported release version.`);
   process.exit(1);
+}
+
+if (tag) {
+  if (!TAG_PATTERN.test(tag)) {
+    console.error(`Tag ${tag} is not a supported release tag (expected v<version>).`);
+    process.exit(1);
+  }
+  if (tag.slice(1) !== pkg) {
+    console.error(`Tag ${tag} does not match version ${pkg}.`);
+    process.exit(1);
+  }
 }
 
 console.log(`Version ${pkg} is consistent.`);

@@ -19,6 +19,7 @@ import { useVoice } from '@/state/voice';
 import { listAudioOutputs, voiceEngine } from '@/lib/voice';
 import { Avatar, Button, Field, Switch, Slider } from '@/components/ui';
 import { AVATAR_COLORS, vars, type ServerMode } from '@/lib/model';
+import { DISPLAY_NAME_PLACEHOLDER, USERNAME_PLACEHOLDER } from '@/lib/profileText';
 import { resolutionLabel } from '@/lib/format';
 import { normalizeServerUrl, signalingApi } from '@/lib/net/api';
 import { STREAM_PRESET_ORDER, STREAM_PRESET_SPECS } from '@/lib/stream/model';
@@ -380,7 +381,7 @@ function AccountSection() {
                 maxLength={24}
                 autoComplete="username"
                 spellCheck={false}
-                placeholder="ansh"
+                placeholder={USERNAME_PLACEHOLDER}
                 onChange={(event) => setUsername(event.target.value)}
               />
             </Field>
@@ -396,7 +397,7 @@ function AccountSection() {
                   className="md-input"
                   value={displayName}
                   maxLength={32}
-                  placeholder="Ansh"
+                  placeholder={DISPLAY_NAME_PLACEHOLDER}
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
               </Field>

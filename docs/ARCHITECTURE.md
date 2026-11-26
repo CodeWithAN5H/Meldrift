@@ -1,6 +1,6 @@
 # Meldrift architecture
 
-Status: `0.7.0-alpha.1` (M0–M6 complete: foundation, permanent UI, the M2
+Status: `0.7.0-alpha.1` (M0–M7 complete: foundation, permanent UI, the M2
 networking foundation, M3 real-time voice, M4 game streaming, M5 remote control
 with player handoff, the M6 reliability and verification pass, and the P0 local
 signaling deployment fix).

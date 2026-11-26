@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
  * Turns the NSIS artifact Tauri produces into the exact release asset name
- * (Meldrift-Setup.exe) and validates it before anything is published.
+ * (Meldrift-Setup.exe), records its real Authenticode state, and hashes the
+ * final file that will be uploaded.
+ *
+ * Signing must happen BEFORE this script runs. The checksum is computed from
+ * the copied installer, so a signature applied afterwards can never produce a
+ * checksum that no longer matches the uploaded artifact.
  */
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -22,25 +28,62 @@ const root = resolve(import.meta.dirname, '..');
 const bundleDir = join(root, 'src-tauri', 'target', 'release', 'bundle', 'nsis');
 const outDir = join(root, 'artifacts');
 const outputName = 'Meldrift-Setup.exe';
+const requireSigning = ['1', 'true'].includes(
+  String(process.env.MELDRIFT_REQUIRE_SIGNING ?? '').toLowerCase(),
+);
 
-if (!existsSync(bundleDir)) {
-  console.error(`Missing NSIS bundle directory: ${bundleDir}`);
-  console.error('Run "bun run tauri build" first.');
+function signatureState(file) {
+  const output = execFileSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      join(root, 'scripts', 'signature-state.ps1'),
+      '-Path',
+      file,
+    ],
+    { encoding: 'utf8' },
+  ).trim();
+  return JSON.parse(output);
+}
+
+let source = process.env.MELDRIFT_INSTALLER_SOURCE?.trim();
+if (!source) {
+  if (!existsSync(bundleDir)) {
+    console.error(`Missing NSIS bundle directory: ${bundleDir}`);
+    console.error('Run "bun run tauri bundle" first.');
+    process.exit(1);
+  }
+  const candidates = readdirSync(bundleDir)
+    .filter((file) => file.toLowerCase().endsWith('.exe'))
+    .map((file) => join(bundleDir, file));
+  if (candidates.length === 0) {
+    console.error('No installer executable found in the NSIS bundle.');
+    process.exit(1);
+  }
+  source = candidates.sort(
+    (a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs,
+  )[0];
+}
+
+if (!existsSync(source)) {
+  console.error(`Installer source does not exist: ${source}`);
   process.exit(1);
 }
 
-const candidates = readdirSync(bundleDir)
-  .filter((file) => file.toLowerCase().endsWith('.exe'))
-  .map((file) => join(bundleDir, file));
+const signature = signatureState(source);
+const signed = signature.status === 'Valid';
 
-if (candidates.length === 0) {
-  console.error('No installer executable found in the NSIS bundle.');
+if (requireSigning && !signed) {
+  console.error(
+    `Signing is required but ${source} has Authenticode status "${signature.status}".`,
+  );
+  console.error('Refusing to package a release that would be reported as signed.');
   process.exit(1);
 }
-
-const source = candidates.sort(
-  (a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs,
-)[0];
 
 const size = statSync(source).size;
 // A Tauri NSIS build is a small self-extracting exe (the WebView2 runtime is
@@ -70,13 +113,20 @@ const report = {
   asset: outputName,
   bytes: size,
   sha256: digest,
-  signed: false,
+  signed,
+  signatureStatus: signature.status,
+  signer: signed ? signature.signer : null,
 };
 
 writeFileSync(join(outDir, 'build-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 
 console.log(`Packaged ${outputName}`);
-console.log(`  version: ${version}`);
-console.log(`  size:    ${(size / 1024 / 1024).toFixed(1)} MB`);
-console.log(`  sha256:  ${digest}`);
-console.log('  signed:  no (configure a certificate to sign — see docs/RELEASING.md)');
+console.log(`  version:   ${version}`);
+console.log(`  size:      ${(size / 1024 / 1024).toFixed(1)} MB`);
+console.log(`  sha256:    ${digest}`);
+console.log(`  signature: ${signature.status}${signed ? ` (${signature.signer})` : ''}`);
+if (!signed) {
+  console.log(
+    '  note:      unsigned build. Configure SIGN_PFX_BASE64 / SIGN_PFX_PASSWORD to sign — see docs/RELEASING.md.',
+  );
+}

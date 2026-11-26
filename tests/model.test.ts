@@ -71,13 +71,13 @@ describe('message sanitising', () => {
 
 describe('identity helpers', () => {
   it('derives initials', () => {
-    expect(initialsOf('Ansh Singh')).toBe('AS');
-    expect(initialsOf('ansh')).toBe('AN');
+    expect(initialsOf('Player One')).toBe('PO');
+    expect(initialsOf('player')).toBe('PL');
     expect(initialsOf('   ')).toBe('?');
   });
 
   it('maps a name to a stable colour', () => {
-    expect(colorFor('Ansh')).toBe(colorFor('Ansh'));
-    expect(colorFor('Ansh')).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(colorFor('Player One')).toBe(colorFor('Player One'));
+    expect(colorFor('Player One')).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });
