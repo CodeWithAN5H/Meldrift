@@ -72,6 +72,13 @@
   color: var(--text-tertiary);
 }
 
+.md-gamecard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .md-gamecard__remove {
   position: absolute;
   top: 8px;

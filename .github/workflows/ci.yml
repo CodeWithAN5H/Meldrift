@@ -31,6 +31,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install server dependencies
+        working-directory: server
+        run: bun install --frozen-lockfile
+
       - name: Check version consistency
         run: node scripts/check-version.mjs
 
@@ -42,6 +46,16 @@ jobs:
 
       - name: Frontend build
         run: bun run build
+
+      - name: Build signaling sidecar
+        run: bun run server:build
+
+      - name: Packaged sidecar lifecycle test
+        run: bun run server:test:packaged
+
+      - name: Server tests
+        working-directory: server
+        run: bun test
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked

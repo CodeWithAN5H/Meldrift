@@ -60,6 +60,31 @@ export function normalizeServerUrl(raw: string): string {
   return `${url.protocol}//${url.host}${path}`;
 }
 
+/** Loopback and private LAN addresses may use plain http during setup. */
+export function isLocalOrPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]') {
+    return true;
+  }
+  if (/^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  const match = /^172\.(\d{1,3})\./.exec(host);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+}
+
+/**
+ * Remote production traffic must be encrypted. Plain http stays available for
+ * loopback and private-LAN setup so a self-hosted test server is usable.
+ */
+export function assertSecureTransport(serverUrl: string): void {
+  const url = new URL(serverUrl);
+  if (url.protocol === 'http:' && !isLocalOrPrivateHost(url.hostname)) {
+    throw new ApiError(
+      'Use an https:// address for an internet-reachable server. Plain http is only allowed for localhost and private LAN addresses.',
+      0,
+    );
+  }
+}
+
 export function websocketUrl(serverUrl: string, token: string): string {
   const url = new URL(serverUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -121,7 +146,10 @@ async function request<T>(
 
 export const signalingApi = {
   health: (serverUrl: string) =>
-    request<{ ok: boolean; protocol: number; name: string }>(serverUrl, '/api/health'),
+    request<{ ok: boolean; protocol: number; name: string; version?: string; uptimeMs?: number }>(
+      serverUrl,
+      '/api/health',
+    ),
 
   register: (serverUrl: string, body: RegisterBody) =>
     request<AuthResponse>(serverUrl, '/api/auth/register', { method: 'POST', body }),
@@ -146,6 +174,12 @@ export const signalingApi = {
 
   joinRoom: (serverUrl: string, token: string, code: string) =>
     request<RoomView>(serverUrl, '/api/rooms/join', { method: 'POST', token, body: { code } }),
+
+  deleteRoom: (serverUrl: string, token: string, roomId: string) =>
+    request<{ ok: boolean }>(serverUrl, `/api/rooms/${encodeURIComponent(roomId)}`, {
+      method: 'DELETE',
+      token,
+    }),
 
   listMessages: (
     serverUrl: string,

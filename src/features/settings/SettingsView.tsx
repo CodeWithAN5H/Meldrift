@@ -13,14 +13,16 @@ import {
 } from 'lucide-react';
 import { useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
+import { useSignaling } from '@/state/signaling';
 import { useUi } from '@/state/ui';
 import { useVoice } from '@/state/voice';
 import { listAudioOutputs, voiceEngine } from '@/lib/voice';
 import { Avatar, Button, Field, Switch, Slider } from '@/components/ui';
-import { AVATAR_COLORS, vars } from '@/lib/model';
+import { AVATAR_COLORS, vars, type ServerMode } from '@/lib/model';
 import { resolutionLabel } from '@/lib/format';
+import { normalizeServerUrl, signalingApi } from '@/lib/net/api';
 import { STREAM_PRESET_ORDER, STREAM_PRESET_SPECS } from '@/lib/stream/model';
-import { APP_VERSION } from '@/lib/version';
+import { APP_VERSION, versionLabel } from '@/lib/version';
 import { MicLevel } from '@/features/voice/MicLevel';
 import './settings.css';
 
@@ -123,6 +125,15 @@ const STATUS_TEXT: Record<string, string> = {
   offline: 'Server unreachable',
 };
 
+const SIGNALING_TEXT: Record<string, string> = {
+  starting: 'Starting…',
+  ready: 'Ready',
+  failed: 'Failed to start',
+  crashed: 'Server stopped unexpectedly',
+  stopped: 'Stopped',
+  unsupported: 'Desktop app only',
+};
+
 function AccountSection() {
   const status = useNetwork((state) => state.status);
   const user = useNetwork((state) => state.user);
@@ -134,18 +145,71 @@ function AccountSection() {
   const signOut = useNetwork((state) => state.signOut);
   const retry = useNetwork((state) => state.retry);
   const pushToast = useUi((state) => state.pushToast);
+  const settings = useWorkspace((state) => state.settings);
+  const updateSettings = useWorkspace((state) => state.updateSettings);
+  const signaling = useSignaling((state) => state.status);
+  const retrySignaling = useSignaling((state) => state.retry);
+  const setSignalingMode = useSignaling((state) => state.setMode);
+  const loadDiagnostics = useSignaling((state) => state.loadDiagnostics);
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [serverUrl, setServerUrl] = useState(currentServer || 'http://127.0.0.1:8787');
+  const [serverMode, setServerMode] = useState<ServerMode>(settings.serverMode);
+  const [remoteUrl, setRemoteUrl] = useState(settings.remoteServerUrl);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [testState, setTestState] = useState<{
+    state: 'idle' | 'testing' | 'ok' | 'error';
+    message: string;
+  }>({ state: 'idle', message: '' });
+  const [logTail, setLogTail] = useState('');
 
   const signedIn = Boolean(user) && status !== 'signed-out';
+  const localReady = signaling.state === 'ready' && Boolean(signaling.url);
+  const serverUrl = serverMode === 'local' ? (signaling.url ?? '') : remoteUrl.trim();
+  const canSubmitAuth = serverMode === 'remote' || localReady;
+
+  const changeMode = async (next: ServerMode) => {
+    setServerMode(next);
+    setTestState({ state: 'idle', message: '' });
+    await updateSettings({ serverMode: next, remoteServerUrl: remoteUrl });
+    await setSignalingMode(next);
+  };
+
+  const commitRemoteUrl = () => {
+    if (settings.remoteServerUrl !== remoteUrl) {
+      void updateSettings({ remoteServerUrl: remoteUrl });
+    }
+  };
+
+  const testConnection = async () => {
+    setTestState({ state: 'testing', message: '' });
+    try {
+      const url = normalizeServerUrl(remoteUrl);
+      const health = await signalingApi.health(url);
+      if (health.name !== 'meldrift-signaling') {
+        throw new Error('That address answered, but it is not a Meldrift signaling server.');
+      }
+      setTestState({
+        state: 'ok',
+        message: `${url} answered${health.version ? ` (v${health.version})` : ''}.`,
+      });
+    } catch (error) {
+      setTestState({
+        state: 'error',
+        message: error instanceof Error ? error.message : 'Could not reach that server',
+      });
+    }
+  };
+
+  const showDiagnostics = async () => {
+    const diagnostics = await loadDiagnostics();
+    setLogTail(diagnostics?.logTail || 'No server log has been written yet.');
+  };
 
   const submit = async () => {
-    if (busy || !username.trim() || !password) return;
+    if (busy || !username.trim() || !password || !canSubmitAuth) return;
     setFormError(null);
     const result =
       mode === 'signin'
@@ -164,13 +228,103 @@ function AccountSection() {
       <Group title="Connection">
         <Row
           title="Status"
-          hint={signedIn && currentServer ? currentServer : 'Local mode — nothing leaves this PC.'}
+          hint={
+            signedIn && currentServer
+              ? currentServer
+              : serverMode === 'local'
+                ? 'Local mode — this PC only.'
+                : 'Remote server mode.'
+          }
         >
           <span className="md-status" data-state={status}>
             <span className="md-status__dot" aria-hidden="true" />
             {STATUS_TEXT[status] ?? status}
           </span>
         </Row>
+        {!signedIn ? (
+          <Row
+            title="Mode"
+            hint="Local runs the bundled server on this PC. Remote connects everyone to one reachable server."
+          >
+            <div className="md-segment md-account__tabs">
+              <button
+                type="button"
+                className="md-segment__item"
+                data-active={serverMode === 'local'}
+                onClick={() => void changeMode('local')}
+              >
+                Local
+              </button>
+              <button
+                type="button"
+                className="md-segment__item"
+                data-active={serverMode === 'remote'}
+                onClick={() => void changeMode('remote')}
+              >
+                Remote server
+              </button>
+            </div>
+          </Row>
+        ) : null}
+        {!signedIn && serverMode === 'local' ? (
+          <>
+            <Row
+              title="Local server"
+              hint={signaling.url ?? 'Starting the bundled signaling service…'}
+            >
+              <span className="md-status" data-state={localReady ? 'online' : 'offline'}>
+                <span className="md-status__dot" aria-hidden="true" />
+                {SIGNALING_TEXT[signaling.state] ?? signaling.state}
+              </span>
+            </Row>
+            {signaling.error ? <p className="md-note md-note--error">{signaling.error}</p> : null}
+            <div className="md-account__actions">
+              <Button onClick={() => void retrySignaling()}>Retry server</Button>
+              <Button onClick={() => void showDiagnostics()}>Show server log</Button>
+            </div>
+            {signaling.logPath ? (
+              <p className="md-note">Server log: {signaling.logPath}</p>
+            ) : null}
+            {logTail ? <pre className="md-note">{logTail}</pre> : null}
+          </>
+        ) : null}
+        {!signedIn && serverMode === 'remote' ? (
+          <>
+            <Field
+              label="Remote server"
+              htmlFor="account-server"
+              hint="HTTPS is required for internet-reachable servers. Everyone must use the same address."
+            >
+              <input
+                id="account-server"
+                className="md-input"
+                value={remoteUrl}
+                placeholder="https://voice.example.com"
+                spellCheck={false}
+                onChange={(event) => {
+                  setRemoteUrl(event.target.value);
+                  setTestState({ state: 'idle', message: '' });
+                }}
+                onBlur={commitRemoteUrl}
+              />
+            </Field>
+            <div className="md-account__actions">
+              <Button
+                onClick={() => void testConnection()}
+                disabled={!remoteUrl.trim() || testState.state === 'testing'}
+              >
+                {testState.state === 'testing' ? 'Testing…' : 'Test connection'}
+              </Button>
+            </div>
+            {testState.message ? (
+              <p
+                className={`md-note ${testState.state === 'error' ? 'md-note--error' : ''}`}
+              >
+                {testState.message}
+              </p>
+            ) : null}
+          </>
+        ) : null}
         {signedIn && user ? (
           <Row title="Signed in as" hint={`@${user.username}`}>
             <div className="md-account__actions">
@@ -191,24 +345,10 @@ function AccountSection() {
 
       {!signedIn ? (
         <>
-          <Group title="Your server">
-            <Field
-              label="Signaling server"
-              htmlFor="account-server"
-              hint="The address of the Meldrift service you or a friend runs. Default port is 8787."
-            >
-              <input
-                id="account-server"
-                className="md-input"
-                value={serverUrl}
-                placeholder="https://voice.example.com"
-                spellCheck={false}
-                onChange={(event) => setServerUrl(event.target.value)}
-              />
-            </Field>
-          </Group>
-
           <Group title={mode === 'signin' ? 'Sign in' : 'Create an account'}>
+            {serverMode === 'local' && !localReady ? (
+              <p className="md-note">Waiting for the local signaling server to answer…</p>
+            ) : null}
             <div className="md-segment md-account__tabs">
               <button
                 type="button"
@@ -286,7 +426,7 @@ function AccountSection() {
             <div className="md-account__actions">
               <Button
                 variant="primary"
-                disabled={busy || !username.trim() || !password}
+                disabled={busy || !username.trim() || !password || !canSubmitAuth}
                 onClick={() => void submit()}
               >
                 {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
@@ -858,23 +998,22 @@ function DataSection() {
 /* ---- About ------------------------------------------------------------- */
 
 function AboutSection() {
-  const info = useWorkspace((state) => state.info);
+  // The bundle that is actually running owns the version, and the channel is
+  // parsed from it. Reading a cached native value here is what previously let
+  // About show an older release than the installed app.
   return (
     <>
       <div className="md-about">
         <h2 className="md-about__name">Meldrift</h2>
         <p className="md-about__tag">Your game. Everyone's turn.</p>
-        <p className="md-about__version">
-          Version {info?.version ?? APP_VERSION} · alpha
-        </p>
+        <p className="md-about__version">Version {versionLabel(APP_VERSION)}</p>
       </div>
       <Group title="This build">
         <p className="md-about__text">
-          Windows desktop shell with the permanent interface, local rooms, chat and
-          friends, plus a self-hostable server for accounts, rooms, messaging and
-          presence. Microphone capture is real but local; voice transmission, game
-          streaming and remote control are the next milestones and are not simulated
-          here.
+          Windows desktop shell with local rooms, chat, friends, peer-to-peer voice,
+          window streaming and consent-based remote control. A signaling server ships
+          with the app and starts locally; choose Remote in Settings to use a
+          self-hosted server instead.
         </p>
       </Group>
       <Group title="Pricing">

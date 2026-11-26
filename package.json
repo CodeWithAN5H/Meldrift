@@ -1,7 +1,7 @@
 {
   "name": "meldrift",
   "private": true,
-  "version": "0.6.0-alpha.2",
+  "version": "0.7.0-alpha.1",
   "type": "module",
   "description": "Meldrift — Your game. Everyone's turn.",
   "scripts": {
@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
+    "server:build": "node scripts/build-server.mjs",
+    "server:test:packaged": "node scripts/test-packaged-server.mjs",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
     "app:package": "tauri build && node scripts/package.mjs"

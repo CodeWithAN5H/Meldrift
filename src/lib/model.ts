@@ -15,6 +15,7 @@ import type { StreamPreset } from '@shared/protocol';
 export type Presence = 'online' | 'idle' | 'offline';
 export type RoomKind = 'game' | 'voice';
 export type ControlMode = 'single' | 'multi';
+export type ServerMode = 'local' | 'remote';
 
 export interface Profile {
   id: string;
@@ -89,6 +90,10 @@ export interface Settings {
   reduceMotion: boolean;
   compactDensity: boolean;
   desktopNotifications: boolean;
+  /** Local mode starts the bundled signaling sidecar; remote uses a URL. */
+  serverMode: ServerMode;
+  /** Persisted address for remote mode. Never used as a localhost fallback. */
+  remoteServerUrl: string;
 }
 
 export interface Bootstrap {
@@ -167,6 +172,8 @@ export function defaultSettings(): Settings {
     reduceMotion: false,
     compactDensity: false,
     desktopNotifications: true,
+    serverMode: 'local',
+    remoteServerUrl: '',
   };
 }
 
@@ -212,6 +219,8 @@ export function sanitizeSettings(raw: Partial<Settings> | null | undefined): Set
     reduceMotion: bool(raw.reduceMotion, base.reduceMotion),
     compactDensity: bool(raw.compactDensity, base.compactDensity),
     desktopNotifications: bool(raw.desktopNotifications, base.desktopNotifications),
+    serverMode: raw.serverMode === 'remote' ? 'remote' : 'local',
+    remoteServerUrl: text(raw.remoteServerUrl, 512, base.remoteServerUrl),
   };
 }
 

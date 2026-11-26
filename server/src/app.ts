@@ -206,6 +206,8 @@ export class SignalingService {
     return this.json({ error: message }, status, origin);
   }
 
+  private readonly startedAt = Date.now();
+
   async handle(request: Request, server: Server<SocketData>): Promise<Response | undefined> {
     const url = new URL(request.url);
     const origin = request.headers.get('origin');
@@ -252,7 +254,17 @@ export class SignalingService {
     const path = url.pathname;
 
     if (method === 'GET' && path === '/api/health') {
-      return this.json({ ok: true, protocol: PROTOCOL_VERSION, name: 'meldrift-signaling' }, 200, origin);
+      return this.json(
+        {
+          ok: true,
+          protocol: PROTOCOL_VERSION,
+          name: 'meldrift-signaling',
+          version: process.env.MELDRIFT_VERSION ?? 'dev',
+          uptimeMs: Date.now() - this.startedAt,
+        },
+        200,
+        origin,
+      );
     }
 
     if (method === 'POST' && path === '/api/auth/register') {
@@ -283,6 +295,9 @@ export class SignalingService {
     }
     if (method === 'POST' && path === '/api/rooms/join') {
       return this.joinRoom(request, user, origin);
+    }
+    if (method === 'DELETE' && path.startsWith('/api/rooms/')) {
+      return this.deleteRoom(path.slice('/api/rooms/'.length), user, origin);
     }
     if (method === 'GET' && path === '/api/messages') {
       return this.listMessages(url, user, origin);
@@ -634,6 +649,52 @@ export class SignalingService {
     const members = this.membersOf(row.id);
     this.broadcastToRoom(row.id, { t: 'room.members', roomId: row.id, members });
     return this.json(this.roomView(row), 200, origin);
+  }
+
+  /**
+   * Only the room owner may delete it. The delete is permanent on the server:
+   * the row (and its unique invite code) is removed, so an old code can never
+   * be used to rejoin, and the room is gone for every member after a restart.
+   *
+   * Deletion is acknowledged with 200 only after both writes committed. Members
+   * are told after the writes, so a client cannot show the room as deleted while
+   * the server still holds it.
+   */
+  private deleteRoom(roomId: string, user: PublicUser, origin: string | null): Response {
+    let id: string;
+    try {
+      id = decodeURIComponent(roomId);
+    } catch {
+      return this.fail('Unknown room', 400, origin);
+    }
+    if (!id || id.length > 64) return this.fail('Unknown room', 400, origin);
+
+    const row = this.db.query('SELECT * FROM rooms WHERE id = ?').get(id) as RoomRow | null;
+    if (!row) return this.fail('This room has already been deleted', 404, origin);
+    if (row.owner_id !== user.id) {
+      return this.fail('Only the room host can delete this room', 403, origin);
+    }
+
+    // Live voice/stream/control state is in memory and keyed by room id. End it
+    // before the rows disappear so participants get an explicit stop event.
+    const members = this.roomAudience(id);
+    this.voiceRooms.delete(id);
+    this.endStream(id, 'The room was deleted.');
+    this.endControl(id, 'The room was deleted.');
+    this.streams.delete(id);
+
+    this.db.query("DELETE FROM messages WHERE scope_type = 'room' AND scope_id = ?").run(id);
+    this.db.query('DELETE FROM rooms WHERE id = ?').run(id);
+
+    const event: ServerEvent = {
+      t: 'room.deleted',
+      roomId: id,
+      name: row.name,
+      actorId: user.id,
+    };
+    for (const memberId of members) this.sendTo(memberId, event);
+
+    return this.json({ ok: true }, 200, origin);
   }
 
   /* ---- Messages -------------------------------------------------------- */

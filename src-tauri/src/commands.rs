@@ -59,9 +59,12 @@ fn bootstrap_inner(db: &Db) -> Result<Bootstrap, String> {
 }
 
 #[tauri::command]
-pub fn app_info(db: State<'_, Db>) -> AppInfo {
+pub fn app_info(app: tauri::AppHandle, db: State<'_, Db>) -> AppInfo {
+    // `package_info` comes from tauri.conf.json in the same build that produced
+    // the installer, so About cannot report a version from a stale Rust crate
+    // cache while the shipped frontend is newer (or the reverse).
     AppInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: app.package_info().version.to_string(),
         data_dir: db.path.clone(),
         runtime: "desktop".to_string(),
     }
@@ -592,6 +595,42 @@ pub fn touch_game(input: IdInput, db: State<'_, Db>) -> Result<(), String> {
         params![input.id, now_ms()],
     )
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn launch_game(input: IdInput, db: State<'_, Db>) -> Result<(), String> {
+    let path: Option<String> = {
+        let conn = lock(&db)?;
+        conn.query_row(
+            "SELECT exe_path FROM games WHERE id = ?1",
+            params![input.id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+    };
+    let path = path.ok_or_else(|| "That game is no longer in your library.".to_string())?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Add the executable path for this game first.".into());
+    }
+    // The path is the one the user chose in their own library. Only a real file
+    // is started, and only after this explicit command; nothing scans for or
+    // launches games on its own.
+    let exe = std::path::Path::new(trimmed);
+    if !exe.is_file() {
+        return Err(format!(
+            "Meldrift could not find {trimmed}. Update the path and try again."
+        ));
+    }
+    let mut command = std::process::Command::new(exe);
+    if let Some(dir) = exe.parent() {
+        command.current_dir(dir);
+    }
+    command
+        .spawn()
+        .map_err(|error| format!("Windows could not start that game: {error}"))?;
     Ok(())
 }
 

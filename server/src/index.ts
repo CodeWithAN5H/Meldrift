@@ -84,3 +84,20 @@ function shutdown(): void {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// If the desktop shell crashes or is force-closed, this sidecar must not keep
+// running invisibly. Poll the parent PID instead of watching stdin: Bun reports
+// EOF on a piped stdin immediately in a compiled Windows executable, which
+// would make a healthy server shut itself down. Plain `bun run start` does not
+// set this.
+if (process.env.MELDRIFT_PARENT_WATCH === '1') {
+  const parent = process.ppid;
+  const watch = setInterval(() => {
+    try {
+      process.kill(parent, 0);
+    } catch {
+      shutdown();
+    }
+  }, 1000);
+  watch.unref?.();
+}

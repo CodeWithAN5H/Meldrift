@@ -43,6 +43,8 @@ interface WorkspaceState {
   init: () => Promise<void>;
   joinRoom: (code: string) => Promise<Room | null>;
   applyRemoteWorkspace: (input: { profile: Profile; rooms: Room[]; friends: Friend[] }) => void;
+  /** Drops a room the server reported deleted, without another round trip. */
+  removeRemoteRoom: (roomId: string) => void;
   appendRemoteMessage: (message: Message) => void;
   applyPresence: (presence: Record<string, Presence>) => void;
   upsertFriend: (friend: Friend) => void;
@@ -51,13 +53,14 @@ interface WorkspaceState {
   updateSettings: (patch: Partial<Settings>) => Promise<void>;
   createRoom: (input: { name: string; kind: RoomKind; gameTitle: string | null }) => Promise<Room | null>;
   updateRoom: (id: string, patch: { name?: string; gameTitle?: string | null }) => Promise<void>;
-  deleteRoom: (id: string) => Promise<void>;
+  deleteRoom: (id: string) => Promise<boolean>;
   loadMessages: (scopeType: MessageScope, scopeId: string) => Promise<void>;
   sendMessage: (scopeType: MessageScope, scopeId: string, body: string) => Promise<boolean>;
   addFriend: (input: { displayName: string; handle: string }) => Promise<Friend | null>;
   removeFriend: (id: string) => Promise<void>;
   addGame: (input: { title: string; exePath: string }) => Promise<Game | null>;
   removeGame: (id: string) => Promise<void>;
+  launchGame: (id: string) => Promise<void>;
   clearWorkspace: () => Promise<void>;
 }
 
@@ -154,6 +157,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       messages: {},
       loadingScopes: {},
       epoch: state.epoch + 1,
+    }));
+  },
+
+  removeRemoteRoom: (roomId) => {
+    set((state) => ({
+      rooms: state.rooms.filter((room) => room.id !== roomId),
+      messages: Object.fromEntries(
+        Object.entries(state.messages).filter(
+          ([key]) => key !== scopeKey('room', roomId),
+        ),
+      ),
     }));
   },
 
@@ -282,24 +296,24 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   deleteRoom: async (id) => {
-    if (getRemoteAdapter()) {
-      useUi.getState().pushToast('Deleting server rooms is not available in this build yet.', 'info');
-      return;
-    }
+    const remote = getRemoteAdapter();
     try {
-      await port.deleteRoom(id);
-      set((state) => ({
-        rooms: state.rooms.filter((room) => room.id !== id),
-        messages: Object.fromEntries(
-          Object.entries(state.messages).filter(([key]) => key !== scopeKey('room', id)),
-        ),
-      }));
+      // The server is authoritative when signed in: only remove local state
+      // after it confirms the delete. A failed request must keep the room.
+      if (remote) {
+        await remote.deleteRoom(id);
+      } else {
+        await port.deleteRoom(id);
+      }
     } catch (error) {
       useUi.getState().pushToast(
         error instanceof Error ? error.message : 'Room could not be deleted.',
         'error',
       );
+      return false;
     }
+    get().removeRemoteRoom(id);
+    return true;
   },
 
   loadMessages: async (scopeType, scopeId) => {
@@ -417,6 +431,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     } catch (error) {
       useUi.getState().pushToast(
         error instanceof Error ? error.message : 'Game could not be removed.',
+        'error',
+      );
+    }
+  },
+
+  launchGame: async (id) => {
+    const game = get().games.find((item) => item.id === id);
+    if (!game) return;
+    if (!game.exePath.trim()) {
+      useUi.getState().pushToast('Add this game\u2019s executable path first.', 'info');
+      return;
+    }
+    try {
+      await port.launchGame(id);
+      const playedAt = Date.now();
+      set((state) => ({
+        games: state.games.map((item) =>
+          item.id === id ? { ...item, lastPlayedAt: playedAt } : item,
+        ),
+      }));
+      try {
+        await port.touchGame(id);
+      } catch {
+        // The launch already happened; the timestamp is cosmetic.
+      }
+    } catch (error) {
+      useUi.getState().pushToast(
+        error instanceof Error ? error.message : 'That game could not be started.',
         'error',
       );
     }

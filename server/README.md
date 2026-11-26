@@ -1,8 +1,9 @@
 # Meldrift signaling service
 
 The service that makes rooms, presence, friends, chat, room voice and game
-streaming between PCs. It is a single Bun binary with one SQLite file, designed
-to be self-hosted.
+streaming between PCs. It is a single Bun binary with one SQLite file. The
+desktop app bundles it as a loopback sidecar for Local mode; the same binary is
+self-hosted for Remote mode. See `docs/DEPLOYMENT.md`.
 
 ```
 bun install
@@ -40,12 +41,17 @@ MELDRIFT_DATA=./data/meldrift.db bun run start     # http://127.0.0.1:8787
   between the authenticated host and its current viewers. Video never passes
   through this service; host upload scales with viewer count.
 
+Room deletion is host-only: `DELETE /api/rooms/:id` removes the room, its
+messages and its invite code, and tells every connected member over the socket.
+
 ## What it does not do yet
 
-Remote control (M5), room deletion or leaving a room, and file uploads. Message delivery is live-only: if both people are
-offline, the message is stored but pushed to nobody until they reconnect and
-open the conversation. No TURN server is bundled — configure one yourself if
-participants may be behind strict NATs.
+Leaving a room (membership ends when the host deletes it), file uploads and game
+audio capture. Remote control (M5) is supported: this service relays control
+signaling only; input travels peer-to-peer and never through the server. Message
+delivery is live-only: if both people are offline, the message is stored but
+pushed to nobody until they reconnect and open the conversation. No TURN server
+is bundled — configure one yourself if participants may be behind strict NATs.
 
 ## Voice relay configuration
 
@@ -73,8 +79,15 @@ voice (ICE config auth, non-member and unknown-room rejection, duplicate joins,
 offer/answer/ICE routing, invalid and oversized payloads, rate limiting, state
 broadcast, leave/close cleanup, the eight-participant cap) and streaming
 (host/member authorization, one stream per room, viewer opt-in/retry, four-viewer
-cap, host-only preset control, SDP/ICE routing and limits, host/viewer cleanup).
-Currently 35 tests.
+cap, host-only preset control, SDP/ICE routing and limits, host/viewer cleanup)
+and room deletion (host authorization, member notification, invite-code
+retirement, already-deleted rooms and restart persistence). Currently 47 tests.
+
+## Health
+
+`GET /api/health` returns `{ ok, protocol, name: "meldrift-signaling", version,
+ uptimeMs }`. It is public, contains no secrets and is what the desktop sidecar
+waits for before enabling account controls.
 
 ## Self-hosting notes
 

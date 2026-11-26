@@ -53,6 +53,7 @@ export interface DataPort {
   removeFriend(id: string): Promise<void>;
   addGame(input: { title: string; exePath: string }): Promise<Game>;
   removeGame(id: string): Promise<void>;
+  launchGame(id: string): Promise<void>;
   touchGame(id: string): Promise<void>;
   clearWorkspace(): Promise<void>;
 }
@@ -84,6 +85,7 @@ export const desktopPort: DataPort = {
   removeFriend: (id) => invoke<void>('remove_friend', { input: { id } }),
   addGame: (input) => invoke<Game>('add_game', { input }),
   removeGame: (id) => invoke<void>('remove_game', { input: { id } }),
+  launchGame: (id) => invoke<void>('launch_game', { input: { id } }),
   touchGame: (id) => invoke<void>('touch_game', { input: { id } }),
   clearWorkspace: () => invoke<void>('clear_workspace'),
 };
@@ -328,6 +330,9 @@ export const webPort: DataPort = {
     const db = readDatabase();
     db.games = db.games.filter((g) => g.id !== id);
     writeDatabase(db);
+  },
+  async launchGame() {
+    throw new Error('Launching a game needs the Windows app.');
   },
   async touchGame(id) {
     const db = readDatabase();

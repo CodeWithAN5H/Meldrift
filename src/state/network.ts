@@ -14,11 +14,14 @@ import { useUi } from '@/state/ui';
 import { colorFor } from '@/lib/model';
 import {
   ApiError,
+  assertSecureTransport,
   normalizeServerUrl,
   signalingApi,
   websocketUrl,
   type StoredSession,
 } from '@/lib/net/api';
+import { resolveSessionServer } from '@/lib/signaling';
+import { useSignaling } from './signaling';
 import { RealtimeConnection, type SocketStatus } from '@/lib/net/realtime';
 import { toFriend, toMessage, toProfile, toRoom } from '@/lib/net/map';
 import { setRemoteAdapter, type RemoteAdapter } from '@/lib/net/hub';
@@ -109,8 +112,19 @@ export const useNetwork = create<NetworkState>((set, get) => ({
       }
       if (!stored) return;
 
-      set({ serverUrl: stored.serverUrl, user: stored.user, status: 'connecting' });
-      await establish(stored.serverUrl, stored.token, stored.user);
+      // A stored session may point at the old fixed loopback port. Local mode
+      // rebinds it to the port the managed sidecar actually chose; remote mode
+      // keeps the configured URL untouched.
+      const signaling = useSignaling.getState().status;
+      const serverUrl = resolveSessionServer(
+        stored.serverUrl,
+        useWorkspace.getState().settings.serverMode,
+        signaling.state === 'ready' ? signaling.url : null,
+      );
+      stored = { ...stored, serverUrl };
+
+      set({ serverUrl, user: stored.user, status: 'connecting' });
+      await establish(serverUrl, stored.token, stored.user);
     } finally {
       initializing = false;
     }
@@ -120,6 +134,7 @@ export const useNetwork = create<NetworkState>((set, get) => ({
     set({ busy: true, error: null });
     try {
       const serverUrl = normalizeServerUrl(input.serverUrl);
+      assertSecureTransport(serverUrl);
       const auth = await signalingApi.login(serverUrl, {
         username: input.username.trim(),
         password: input.password,
@@ -143,6 +158,7 @@ export const useNetwork = create<NetworkState>((set, get) => ({
     set({ busy: true, error: null });
     try {
       const serverUrl = normalizeServerUrl(input.serverUrl);
+      assertSecureTransport(serverUrl);
       const localProfile = useWorkspace.getState().profile;
       const auth = await signalingApi.register(serverUrl, {
         username: input.username.trim(),
@@ -312,6 +328,9 @@ function installVoiceTransport(selfId: string): void {
 }
 
 async function establish(serverUrl: string, authToken: string, hintUser?: PublicUser): Promise<void> {
+  // Also covers a session stored by an older build: never send a bearer token
+  // to a public plain-http server. Loopback and private LAN remain allowed.
+  assertSecureTransport(serverUrl);
   token = authToken;
   activeServer = serverUrl;
   useNetwork.setState({ error: null, status: 'connecting', serverUrl, user: hintUser ?? null });
@@ -400,6 +419,32 @@ function handleEvent(event: ServerEvent): void {
       }));
       return;
     }
+    case 'room.deleted': {
+      // The host deleted the room on the server. Drop every trace of it here:
+      // the list entry, cached history, membership, live media and the view.
+      useWorkspace.getState().removeRemoteRoom(event.roomId);
+      useNetwork.setState((state) => {
+        const members = { ...state.members };
+        delete members[event.roomId];
+        return { members };
+      });
+      const roomState = useVoiceRoom.getState();
+      if (roomState.roomId === event.roomId) roomState.leave('The room was deleted.');
+      const streamState = useStreamRoom.getState();
+      if (streamState.roomId === event.roomId) streamState.leaveRoom();
+      const controlState = useControlRoom.getState();
+      if (controlState.roomId === event.roomId) controlState.leaveRoom();
+      const view = useUi.getState().view;
+      if (view.kind === 'room' && view.roomId === event.roomId) {
+        useUi.getState().navigate({ kind: 'rooms' });
+      }
+      if (event.actorId !== useNetwork.getState().user?.id) {
+        useUi
+          .getState()
+          .pushToast(`The host deleted the room \"${event.name}\".`, 'info');
+      }
+      return;
+    }
     case 'friend.update': {
       useWorkspace.getState().upsertFriend(toFriend(event.friend));
       useNetwork.setState((state) => ({
@@ -485,6 +530,15 @@ function makeAdapter(serverUrl: string, userId: string): RemoteAdapter {
       const view = await signalingApi.joinRoom(serverUrl, requireToken(), code);
       rememberMembers(view);
       return toRoom(view, userId);
+    },
+
+    deleteRoom: async (roomId) => {
+      await signalingApi.deleteRoom(serverUrl, requireToken(), roomId);
+      useNetwork.setState((state) => {
+        const members = { ...state.members };
+        delete members[roomId];
+        return { members };
+      });
     },
 
     loadMessages: async (scopeType, scopeId) => {

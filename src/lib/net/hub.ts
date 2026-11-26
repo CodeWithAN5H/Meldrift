@@ -15,6 +15,7 @@ export interface RemoteAdapter {
   loadMessages(scopeType: MessageScope, scopeId: string): Promise<Message[]>;
   sendMessage(scopeType: MessageScope, scopeId: string, body: string): Promise<Message>;
   joinRoom(code: string): Promise<Room>;
+  deleteRoom(roomId: string): Promise<void>;
   removeFriend(userId: string): Promise<void>;
 }
 

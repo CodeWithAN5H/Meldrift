@@ -1,8 +1,9 @@
 # Meldrift architecture
 
-Status: `0.6.0-alpha.2` (M0–M6 complete: foundation, permanent UI, the M2
+Status: `0.7.0-alpha.1` (M0–M6 complete: foundation, permanent UI, the M2
 networking foundation, M3 real-time voice, M4 game streaming, M5 remote control
-with player handoff, and the M6 reliability and verification pass).
+with player handoff, the M6 reliability and verification pass, and the P0 local
+signaling deployment fix).
 
 ## Stack decisions
 
@@ -14,7 +15,7 @@ with player handoff, and the M6 reliability and verification pass).
 | Styling | **Hand-written CSS + tokens** | Zero runtime CSS cost and exact control over the reference design. No utility framework, no CSS-in-JS. |
 | Icons | **Lucide** | Tree-shaken SVG set; the brand mark is a local SVG. |
 | Persistence | **SQLite via rusqlite (bundled)** | Real relational data, WAL for non-blocking reads, no external database. |
-| Networking | **Bun + bun:sqlite + WebSocket** | One compiled binary, no Node/native build step, self-hostable; the same TypeScript protocol file is imported by the client. |
+| Networking | **Bun + bun:sqlite + WebSocket** | One compiled binary, no Node/native build step. The same binary runs as a bundled local Tauri sidecar (default, loopback only) or as a self-hosted HTTPS/WSS service for cross-PC play; the same TypeScript protocol file is imported by the client. |
 | Voice | **WebRTC in WebView2 (Chromium)** | A maintained WebRTC stack with Opus, ICE, DTLS-SRTP, echo cancellation (AEC3), noise suppression and gain control already inside the WebView2 runtime. No extra native audio/WebRTC dependency, no second process, and the same code path on every Windows machine. See `docs/VOICE.md` for why not `webrtc-rs` + a native audio stack. |
 | Video capture | **WebView2 `getDisplayMedia` (Windows Graphics Capture)** | Chromium's supported Win32 capture path, no full-resolution frame copies over IPC and no second capture/WebRTC stack. The same picker provides window and display sources. See `docs/STREAMING.md`. |
 | Video transport | **WebRTC video-only peer connections, host → viewer mesh** | Reuses the WebView2 codec and ICE stack while keeping voice SDP independent. One connection per viewer, capped at four because the host uploads each encoded stream itself. |
@@ -47,11 +48,13 @@ Details, limits and troubleshooting: `docs/STREAMING.md`.
 ## Module boundaries
 
 ```
-src-tauri/                 Rust core — owns disk, Windows APIs, future capture
+src-tauri/                 Rust core — owns disk, Windows APIs, capture
   src/db.rs                Schema, migrations, CSPRNG invite codes
   src/models.rs            Wire models (serde camelCase both directions)
   src/commands.rs          Command surface + validation + tests
+  src/signaling.rs         Bundled sidecar: port choice, readiness, restart, stop
   src/lib.rs               Builder, window lifecycle, command registration
+  binaries/                Built sidecar (gitignored; `bun run server:build`)
 
 server/                    Signaling service (Bun, self-hosted)
   src/db.ts                Server schema, invite codes, session tokens
@@ -64,6 +67,8 @@ shared/protocol.ts         Wire types imported by both sides
 
 src/
   lib/ipc.ts               DataPort interface + desktop/localStorage adapters
+  lib/signaling.ts         Typed local-server bridge + session URL rebinding
+  state/signaling.ts       Server readiness/mode/diagnostics store
   lib/model.ts             Types, validation, settings defaults, shared hooks
   lib/net/api.ts           Typed HTTP client for the signaling service
   lib/net/realtime.ts      Reconnecting socket: backoff, heartbeat, acks

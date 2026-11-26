@@ -1,8 +1,25 @@
 # Networking (M2), voice (M3), stream (M4) and control signaling (M5)
 
 Meldrift is local-first. Signed out, every room, message and friend lives in
-SQLite on that PC. Signing in switches the workspace to a **signaling service**
-you run yourself, so rooms, chat and room voice are shared with other PCs.
+SQLite on that PC. The desktop app also runs a **bundled signaling sidecar** on
+loopback by default, so accounts, rooms and chat work on one PC without internet
+or a separate server. Cross-PC play uses **Remote server mode** against one
+shared signaling service you host yourself; everyone must point at the same
+instance. See `docs/DEPLOYMENT.md`.
+
+## Deployment modes
+
+- **Local (default):** `meldrift-server.exe` is shipped in the installer, started
+  and health-checked by the Rust core, restarted after crashes and killed on
+  exit. It binds `127.0.0.1:8787–8796` only, uses
+  `<app data>/server/meldrift.db`, and never falls back to a public interface.
+- **Remote:** the local sidecar is stopped. The configured `https://` address is
+  used exactly as entered; a public plain-`http` address is rejected. LAN/private
+  http remains available for testing.
+
+A stored session that points at the old fixed loopback port is rebound to the
+sidecar's actual port in Local mode. Remote sessions are never rewritten to
+localhost.
 
 ## What the service is
 
@@ -27,7 +44,9 @@ bun install --cwd server
 cd server && bun run start          # http://127.0.0.1:8787
 ```
 
-See `server/README.md` for environment variables, Docker and self-hosting notes.
+For the desktop app, Local mode does this automatically through the bundled
+sidecar. See `docs/DEPLOYMENT.md` for both modes, `server/README.md` for
+environment variables, Docker and reverse-proxy notes.
 
 ## Wire protocol
 
@@ -39,6 +58,7 @@ a protocol change breaks the build on whichever side was not updated.
 | `POST /api/auth/register`, `/login`, `/logout` | Account and session lifecycle |
 | `GET /api/bootstrap` | Signed-in snapshot: user, rooms, friends, requests, conversations |
 | `POST /api/rooms`, `/api/rooms/join` | Create a room / join by invite code |
+| `DELETE /api/rooms/:id` | Host-only, permanent room deletion (members are notified over the socket) |
 | `GET /api/messages?scopeType=&scopeId=` | History for a room or conversation |
 | `POST /api/friends`, `/accept`, `DELETE /api/friends/:id` | Friend lifecycle |
 | `GET /api/dm/:peerId` | Get or create a conversation with a friend |
@@ -57,6 +77,8 @@ src/lib/net/realtime.ts   Reconnecting socket: backoff, heartbeat, ack promises
 src/lib/net/map.ts        Pure wire ↔ UI model mapping and message merging
 src/lib/net/hub.ts        The seam the workspace store uses to detect "online"
 src/state/network.ts      Session, connection status, presence, requests, adapter
+src/lib/signaling.ts      Typed bridge to the native local-server lifecycle
+src/state/signaling.ts    Readiness, mode switching, retry and diagnostics
 src/lib/stream/           Video presets/adaptation, stats, host and viewer peers
 src/lib/control/          Key map, input frames, input peer sessions, Tauri bridge
 src/state/streamRoom.ts   Capture, stream session, viewer stats, cleanup
@@ -197,8 +219,9 @@ address/merge/mapping and voice mesh logic.
 
 ## Limits in this milestone
 
-- No room rename, delete or leave for server rooms yet. Local rooms still support
-  rename and delete.
+- No room rename or leave for server rooms yet. The host can permanently delete
+  a server room (the room row, its invite code and its messages); local rooms
+  support rename and delete as before.
 - Message history is fetched when a conversation opens; live delivery only
   reaches clients that are connected at that moment. Offline messages are stored
   and appear on the next open.

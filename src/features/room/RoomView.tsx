@@ -201,13 +201,19 @@ export function RoomView({ roomId }: { roomId: string }) {
                 icon: <Copy size={14} />,
                 onSelect: () => void copyInvite(),
               },
-              {
-                id: 'delete',
-                label: 'Delete room',
-                icon: <Trash2 size={14} />,
-                danger: true,
-                onSelect: () => openModal('delete-room', { roomId: room.id }),
-              },
+              // Only the owner can delete: the server refuses anyone else, so
+              // do not offer an action that would fail.
+              ...(room.isOwned
+                ? [
+                    {
+                      id: 'delete',
+                      label: 'Delete room',
+                      icon: <Trash2 size={14} />,
+                      danger: true,
+                      onSelect: () => openModal('delete-room', { roomId: room.id }),
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>

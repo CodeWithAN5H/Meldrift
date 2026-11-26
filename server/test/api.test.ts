@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Server } from 'bun';
 import type { ServerEvent } from '../../shared/protocol';
 import { SignalingService, type ServiceOptions, type SocketData } from '../src/app';
@@ -12,13 +15,16 @@ let server: Server<SocketData>;
 let base: string;
 let wsBase: string;
 
-function startServer(options: ServiceOptions = {}): {
+function startServer(
+  options: ServiceOptions = {},
+  dbPath = ':memory:',
+): {
   service: SignalingService;
   server: Server<SocketData>;
   base: string;
   stop: () => void;
 } {
-  const instance = new SignalingService(':memory:', options);
+  const instance = new SignalingService(dbPath, options);
   const bunServer = Bun.serve<SocketData>({
     port: 0,
     hostname: '127.0.0.1',
@@ -126,6 +132,8 @@ describe('service basics', () => {
     expect(status).toBe(200);
     expect(data.ok).toBe(true);
     expect(data.protocol).toBe(1);
+    expect(data.name).toBe('meldrift-signaling');
+    expect(typeof data.uptimeMs).toBe('number');
   });
 
   it('rejects unauthenticated bootstrap', async () => {
@@ -154,7 +162,7 @@ describe('service basics', () => {
 
 describe('accounts', () => {
   it('registers, rejects duplicates and validates input', async () => {
-    const { username } = await registerUser('Ansh');
+    const { username } = await registerUser('Player One');
 
     const duplicate = await api('/api/auth/register', {
       method: 'POST',
@@ -195,7 +203,7 @@ describe('accounts', () => {
 
 describe('rooms and messaging', () => {
   it('creates a room, joins by code and fans out messages', async () => {
-    const host = await registerUser('Ansh');
+    const host = await registerUser('Player One');
     const guest = await registerUser('Rohan');
 
     const created = await api(
@@ -260,7 +268,7 @@ describe('rooms and messaging', () => {
   });
 
   it('refuses messages from a non-member', async () => {
-    const owner = await registerUser('Ansh');
+    const owner = await registerUser('Player One');
     const stranger = await registerUser('Aman');
 
     const room = await api(
@@ -299,7 +307,7 @@ describe('rooms and messaging', () => {
 
 describe('friends and direct messages', () => {
   it('requires friendship, then delivers DMs both ways', async () => {
-    const a = await registerUser('Ansh');
+    const a = await registerUser('Player One');
     const b = await registerUser('Siddharth');
 
     const request = await api(
@@ -351,7 +359,7 @@ describe('friends and direct messages', () => {
   });
 
   it('blocks conversations with non-friends', async () => {
-    const a = await registerUser('Ansh');
+    const a = await registerUser('Player One');
     const stranger = await registerUser('Arya');
     const result = await api(`/api/dm/${stranger.user.id}`, {}, a.token);
     expect(result.status).toBe(403);
@@ -360,7 +368,7 @@ describe('friends and direct messages', () => {
 
 describe('presence', () => {
   it('broadcasts online and offline transitions to friends', async () => {
-    const a = await registerUser('Ansh');
+    const a = await registerUser('Player One');
     const b = await registerUser('Aman');
 
     await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: b.username }) }, a.token);
@@ -390,5 +398,130 @@ describe('presence', () => {
     expect(offline.t).toBe('presence.update');
 
     socketA.close();
+  });
+});
+
+describe('room deletion', () => {
+  it('lets only the host delete, notifies members and retires the invite code', async () => {
+    const host = await registerUser('Player One');
+    const guest = await registerUser('Rohan');
+
+    const created = await api(
+      '/api/rooms',
+      { method: 'POST', body: JSON.stringify({ name: 'The Boys', kind: 'game' }) },
+      host.token,
+    );
+    const roomId = created.data.id as string;
+    const inviteCode = created.data.inviteCode as string;
+
+    const joined = await api(
+      '/api/rooms/join',
+      { method: 'POST', body: JSON.stringify({ code: inviteCode }) },
+      guest.token,
+    );
+    expect(joined.status).toBe(200);
+
+    const hostSocket = await connect(host.token);
+    const guestSocket = await connect(guest.token);
+    await waitFor(hostSocket.events, (event) => event.t === 'ready');
+    await waitFor(guestSocket.events, (event) => event.t === 'ready');
+
+    // A member who did not create the room cannot delete it.
+    const forbidden = await api(`/api/rooms/${roomId}`, { method: 'DELETE' }, guest.token);
+    expect(forbidden.status).toBe(403);
+    expect((await api('/api/bootstrap', {}, guest.token)).data.rooms).toHaveLength(1);
+
+    const deleted = await api(`/api/rooms/${roomId}`, { method: 'DELETE' }, host.token);
+    expect(deleted.status).toBe(200);
+    expect(deleted.data.ok).toBe(true);
+
+    // Every member is told, including the host.
+    const guestNotice = await waitFor(
+      guestSocket.events,
+      (event) => event.t === 'room.deleted' && event.roomId === roomId,
+    );
+    expect(guestNotice.t === 'room.deleted' && guestNotice.name).toBe('The Boys');
+    expect(guestNotice.t === 'room.deleted' && guestNotice.actorId).toBe(host.user.id);
+    await waitFor(hostSocket.events, (event) => event.t === 'room.deleted' && event.roomId === roomId);
+
+    // Gone from both authoritative room lists.
+    expect((await api('/api/bootstrap', {}, host.token)).data.rooms).toHaveLength(0);
+    expect((await api('/api/bootstrap', {}, guest.token)).data.rooms).toHaveLength(0);
+
+    // The old invite code can no longer be joined, and a second delete is 404.
+    const rejoin = await api(
+      '/api/rooms/join',
+      { method: 'POST', body: JSON.stringify({ code: inviteCode }) },
+      guest.token,
+    );
+    expect(rejoin.status).toBe(404);
+    const again = await api(`/api/rooms/${roomId}`, { method: 'DELETE' }, host.token);
+    expect(again.status).toBe(404);
+
+    // Messages in the deleted room are gone too.
+    const history = await api(
+      `/api/messages?scopeType=room&scopeId=${roomId}`,
+      {},
+      host.token,
+    );
+    expect(history.status).toBe(403);
+
+    hostSocket.close();
+    guestSocket.close();
+  });
+
+  it('keeps a deleted room deleted after the server restarts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'meldrift-delete-'));
+    const dbPath = join(dir, 'meldrift.db');
+    try {
+      const first = startServer({ authBurst: 50 }, dbPath);
+      let token = '';
+      let roomId = '';
+      try {
+        const registered = await fetch(`${first.base}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            username: 'deletecheck',
+            password: 'correct-horse-1',
+            displayName: 'Delete Check',
+          }),
+        }).then((response) => response.json() as Promise<{ token: string }>);
+        token = registered.token;
+
+        const created = await fetch(`${first.base}/api/rooms`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name: 'Temporary', kind: 'voice' }),
+        }).then((response) => response.json() as Promise<{ id: string }>);
+        roomId = created.id;
+
+        const deleted = await fetch(`${first.base}/api/rooms/${roomId}`, {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(deleted.status).toBe(200);
+      } finally {
+        first.stop();
+      }
+
+      const second = startServer({ authBurst: 50 }, dbPath);
+      try {
+        const bootstrap = await fetch(`${second.base}/api/bootstrap`, {
+          headers: { authorization: `Bearer ${token}` },
+        }).then((response) => response.json() as Promise<{ rooms: unknown[] }>);
+        expect(bootstrap.rooms).toHaveLength(0);
+
+        const missing = await fetch(`${second.base}/api/rooms/${roomId}`, {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(missing.status).toBe(404);
+      } finally {
+        second.stop();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

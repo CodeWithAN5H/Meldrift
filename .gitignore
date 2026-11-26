@@ -9,6 +9,8 @@ dist-ssr/
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/schemas/
+# Built sidecar; produced by `bun run server:build`
+src-tauri/binaries/
 
 # Editor / OS
 .vscode/*

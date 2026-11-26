@@ -2,6 +2,7 @@ mod commands;
 mod control;
 mod db;
 mod models;
+mod signaling;
 mod startup;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,6 +46,7 @@ fn should_reveal_anyway(page_loaded: bool, waited: Duration) -> bool {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // MELDRIFT_DATA_DIR lets a second local instance keep its own
             // session while testing multi-client behaviour on one PC.
@@ -67,6 +69,11 @@ pub fn run() {
             };
             app.manage(database);
             startup::log("database ready");
+            // The local signaling service is a bundled sidecar. It binds only
+            // to loopback and is supervised for the whole app lifetime.
+            app.manage(signaling::SignalingState::new(data_dir.clone()));
+            signaling::autostart(app.handle().clone());
+            startup::log("signaling sidecar starting");
             // Input injection and the Ctrl+Alt+F12 emergency stop only exist
             // while the desktop app is running.
             control::init(app.handle());
@@ -115,9 +122,10 @@ pub fn run() {
             reveal(&webview.window());
         })
         // A closing window must never leave a remotely held key down.
-        .on_window_event(|_window, event| {
+        .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 control::shutdown();
+                signaling::shutdown(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -136,6 +144,7 @@ pub fn run() {
             commands::update_friend,
             commands::remove_friend,
             commands::add_game,
+            commands::launch_game,
             commands::touch_game,
             commands::remove_game,
             commands::clear_workspace,
@@ -145,6 +154,11 @@ pub fn run() {
             control::control_inject,
             control::control_armed,
             control::control_resume,
+            signaling::signaling_status,
+            signaling::signaling_start,
+            signaling::signaling_stop,
+            signaling::signaling_set_mode,
+            signaling::signaling_diagnostics,
         ])
         .build(tauri::generate_context!());
 
@@ -159,6 +173,7 @@ pub fn run() {
     app.run(|_app, event| {
         if let tauri::RunEvent::Exit = event {
             control::shutdown();
+            signaling::shutdown(_app);
         }
     });
 }

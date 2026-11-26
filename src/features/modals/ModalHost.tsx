@@ -388,28 +388,43 @@ function DeleteRoomModal({ roomId, onClose }: { roomId: string; onClose: () => v
   const view = useUi((state) => state.view);
   const navigate = useUi((state) => state.navigate);
   const pushToast = useUi((state) => state.pushToast);
+  const online = useNetwork((state) => state.status === 'online');
+  const [busy, setBusy] = useState(false);
   const room = rooms.find((item) => item.id === roomId);
+  const canDelete = Boolean(room) && (!online || room?.isOwned === true);
 
   return (
     <Modal
       title="Delete this room?"
-      subtitle={room ? `"${room.name}" and its messages will be removed from this PC.` : 'This room no longer exists.'}
+      subtitle={
+        room
+          ? online
+            ? `\"${room.name}\" and its messages will be deleted for everyone.`
+            : `\"${room.name}\" and its messages will be removed from this PC.`
+          : 'This room no longer exists.'
+      }
       onClose={onClose}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="danger"
-            disabled={!room}
+            disabled={!canDelete || busy}
             onClick={async () => {
-              if (!room) return;
-              await deleteRoom(room.id);
-              pushToast('Room deleted');
+              if (!room || busy || !canDelete) return;
+              setBusy(true);
+              const deleted = await deleteRoom(room.id);
+              setBusy(false);
+              // Only the server (or local database) can confirm success. On a
+              // failure the store has already reported the real error and the
+              // room stays exactly where it was.
+              if (!deleted) return;
+              pushToast('Room deleted', 'success');
               onClose();
               if (view.kind === 'room' && view.roomId === room.id) navigate({ kind: 'rooms' });
             }}
           >
-            <Trash2 size={14} /> Delete room
+            <Trash2 size={14} /> {busy ? 'Deleting…' : 'Delete room'}
           </Button>
         </>
       }
@@ -418,6 +433,11 @@ function DeleteRoomModal({ roomId, onClose }: { roomId: string; onClose: () => v
         Messages saved in this room are deleted with it. Game records and your friends
         are not affected.
       </p>
+      {room && !canDelete ? (
+        <p className="md-note md-note--error">
+          Only the host who created this room can delete it.
+        </p>
+      ) : null}
     </Modal>
   );
 }

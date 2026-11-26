@@ -129,6 +129,8 @@ export type ServerEvent =
   | { t: 'message.error'; clientId: string; error: string }
   | { t: 'presence.update'; userId: string; presence: Presence }
   | { t: 'room.members'; roomId: string; members: RoomMemberView[] }
+  /** Sent to every member after the host deleted the room on the server. */
+  | { t: 'room.deleted'; roomId: string; name: string; actorId: string }
   | { t: 'friend.update'; friend: FriendView }
   | { t: 'friend.request'; request: FriendRequestView }
   | { t: 'pong'; ts: number }

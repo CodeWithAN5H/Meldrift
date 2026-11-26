@@ -115,13 +115,15 @@ export function RoomsView() {
                   >
                     Open
                   </Button>
-                  <IconButton
-                    label={`Delete ${room.name}`}
-                    tone="danger"
-                    onClick={() => openModal('delete-room', { roomId: room.id })}
-                  >
-                    <Trash2 size={15} />
-                  </IconButton>
+                  {room.isOwned ? (
+                    <IconButton
+                      label={`Delete ${room.name}`}
+                      tone="danger"
+                      onClick={() => openModal('delete-room', { roomId: room.id })}
+                    >
+                      <Trash2 size={15} />
+                    </IconButton>
+                  ) : null}
                 </div>
               </div>
               <p className="md-roomtable__stamp">Last activity {clockTime(room.lastActiveAt)}</p>

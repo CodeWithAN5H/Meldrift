@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useWorkspace } from '@/state/workspace';
 import { useNetwork } from '@/state/network';
+import { useSignaling } from '@/state/signaling';
 import { useUi, type View } from '@/state/ui';
 import { useVoice } from '@/state/voice';
 import { useVoiceRoom } from '@/state/voiceRoom';
@@ -31,18 +32,25 @@ export function App() {
   const profile = useWorkspace((state) => state.profile);
   const init = useWorkspace((state) => state.init);
   const initNetwork = useNetwork((state) => state.initialize);
+  const initSignaling = useSignaling((state) => state.init);
   const booted = useRef(false);
 
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
-    // Local data first, then the stored session: if a session exists, the
-    // server must win the final write, never the local database.
+    // Local data first, then the signaling service, then the stored session.
+    // Local mode must have a live, health-checked server before account
+    // controls unlock; remote mode must never be replaced by localhost.
     void (async () => {
       await init();
+      try {
+        await initSignaling();
+      } catch {
+        // The Account screen surfaces the startup failure and offers a retry.
+      }
       await initNetwork();
     })();
-  }, [init, initNetwork]);
+  }, [init, initNetwork, initSignaling]);
 
   useGlobalShortcuts();
   usePushToTalk();

@@ -1,6 +1,6 @@
 # Meldrift status
 
-Version: `0.6.0-alpha.2` · Updated: 2026-11-26
+Version: `0.7.0-alpha.1` · Updated: 2026-11-26
 
 ## Completed
 
@@ -136,11 +136,43 @@ Version: `0.6.0-alpha.2` · Updated: 2026-11-26
   previous install; the recording is in `docs/M6_VERIFICATION.md` and the hash
   is below under Distribution.
 
+**P0 — Signaling server deployment**
+- Root cause of the unusable `127.0.0.1:8787`: the installer shipped no
+  signaling server and launched no process. The UI only prefilled the address.
+- Local mode (default): the existing Bun service is compiled to
+  `meldrift-server.exe` and bundled as a Tauri `externalBin` sidecar. Rust owns
+  port selection (`127.0.0.1:8787–8796`), spawn, a real `/api/health` readiness
+  gate, crash detection with up to three restarts, log capture to a separate
+  `logs/signaling.log`, and process-group shutdown on close.
+- Local database lives at `<app data>/server/meldrift.db`, so accounts, rooms,
+  friends and messages survive app restarts and upgrades. Existing local
+  workspace databases are untouched.
+- Remote mode: explicit opt-in in Settings → Account. The local sidecar is
+  stopped, the configured URL is used verbatim, and public plain-http is
+  rejected (loopback/private LAN http remains available for testing). A stored
+  session on the old loopback port is rebound only in local mode.
+- Settings shows mode, readiness, server URL/port, startup error, log path and
+  a connection test. Account controls stay disabled until the local server is
+  ready.
+- Packaged sidecar verification: health identity, account + room creation,
+  restart persistence, duplicate-port rejection and port release on shutdown
+  (9 checks). Rust unit tests cover health parsing, loopback URLs and the
+  camelCase UI contract; frontend tests cover settings, URL safety and session
+  rebinding.
+
 **Distribution**
 - NSIS installer packaged as `artifacts/Meldrift-Setup.exe` for
-  `0.6.0-alpha.2`: 1,841,858 bytes, SHA-256
-  `49771ebf5a935f94eba60f969f81691756b83556f6875e603ef402c5bb8b5f48`,
-  unsigned.
+  `0.7.0-alpha.1`: **32,865,965 bytes**, SHA-256
+  `a25a22c8de46dfc32cea6cb1e7d17e324f9e372b11f80d822043c20287ba23e0`,
+  unsigned. It now contains the 82.1 MiB signaling sidecar (LZMA-compressed in
+  the installer), which is why the installer grew from 1.8 MB.
+- Installed over `0.6.0-alpha.2` on this machine and verified with 11 checks:
+  the bundled sidecar started on `127.0.0.1:8787`, health reported
+  `meldrift-signaling` at `0.7.0-alpha.1`, account and room creation worked,
+  a forced app kill left no orphaned server, the database survived, the account
+  and room survived a restart, and a graceful close stopped the server and
+  released the port. Voice, streaming, remote control and the settings UI were
+  **not re-exercised in this installed run**.
 - Installer upgrade verified on this machine: a fresh 0.5.0 install showed
   first-run onboarding, saved a profile and reported `0.5.0-alpha.1` in About;
   running the 0.6.0 installer over it replaced the binary, skipped onboarding on
@@ -159,7 +191,7 @@ Version: `0.6.0-alpha.2` · Updated: 2026-11-26
 Automated:
 
 - `bun run typecheck` — clean.
-- `bun run test` — **79 tests passing** across 6 files. M6 adds 5 regression
+- `bun run test` — **92 tests passing** across 8 files. M6 added 5 regression
   tests: control target selection (live id, closed id, captured-title and
   first-visible fallbacks) and voice mesh roster retention plus a repeat ICE
   restart after a failed attempt. The M5 group covers physical key mapping and
@@ -174,7 +206,7 @@ Automated:
   immediate revocation of the previous controller, host-only revoke, controller
   release, disconnect/stream-stop/host-close cleanup, signalling direction,
   stale/oversized/flood rejection and replayed grants after handoff.
-- `cargo test` — **9 tests passing, 1 ignored** (migrations, invite codes,
+- `cargo test` — **14 tests passing, 1 ignored** (migrations, invite codes,
   room/message flows, scope rejection, cascade deletes, session round-trip,
   control batch validation) plus the ignored native `SendInput` test.
 - `bun run build` — 463 kB JS / 72 kB CSS.
@@ -268,9 +300,9 @@ The full record, including the cross-PC checks that were not run, is in
 `docs/M6_VERIFICATION.md`. Automated verification on the changed tree:
 
 - `bun run typecheck` — clean.
-- `bun run test` — **79 tests passing** across 6 files.
+- `bun run test` — **92 tests passing** across 8 files.
 - `cd server && bun test` — **45 integration tests passing**.
-- `cargo test` — **9 tests passing, 1 ignored** (the native `SendInput` test).
+- `cargo test` — **14 tests passing, 1 ignored** (the native `SendInput` test).
 - `bun run app:build` / `bun run app:package` — release binary and NSIS
   installer built for `0.6.0-alpha.1`.
 
@@ -364,9 +396,10 @@ separate app-data directories or two machines.
 
 ## In progress
 
-- Nothing. M6 is complete. Gamepad forwarding, multiple simultaneous
-  controllers, TURN deployment and two-machine verification remain future work
-  and are not presented as available.
+- Nothing. Local/remote signaling, room deletion and the Games integration are
+  complete. Signing and release automation are parked for a later pass. Gamepad
+  forwarding, multiple simultaneous controllers, TURN deployment and two-machine
+  verification remain future work and are not presented as available.
 
 ## Fixed after the 0.6.0-alpha.1 tag
 
@@ -463,8 +496,28 @@ separate app-data directories or two machines.
   The full transport and real `SendInput` were exercised, but not physical
   keyboards on two machines, and remote control has only been measured on a
   loopback LAN path.
-- **Server rooms cannot be renamed, deleted or left** in this build. Local rooms
-  can.
+- **Remote cross-PC operation is NOT VERIFIED in this P0 pass.** No second
+  physical PC or public deployment was available. Local mode was exercised on
+  the installed build; Remote mode is covered by URL/mode tests and documented
+  deployment, not by a two-machine run.
+- **Voice, streaming and remote control were not re-exercised on the installed
+  P0 build.** Account creation, sign-in, room creation/listing, messaging,
+  crash cleanup, restart persistence and shutdown were verified over HTTP
+  against the installed app's own server. The media planes are unchanged.
+- **Clean-Windows installation is NOT VERIFIED.** The sidecar was tested on this
+  Windows machine, including a first launch from the NSIS install; a fresh VM
+  without this machine's runtimes was not used.
+- **Local ports are fixed to 8787–8796.** If every port is occupied by a
+  non-Meldrift process, local mode fails with a diagnostic rather than binding
+  elsewhere. A reused Meldrift server from another app instance is healthy but
+  is not restarted by this process.
+- **Server rooms can be deleted by their host** (permanent, with member
+  notification and invite-code retirement). Rename and leave are still local-only.
+- **Game launch** starts the executable path the user saved; Meldrift does not
+  scan for installations. Window capture still goes through Windows' picker, so
+  a specific window cannot be preselected from the Games library.
+- **About** shows the version compiled into the running bundle and derives its
+  channel (Alpha/Beta/Stable) from that version.
 - **Presence** is online/idle/offline with no inactivity timer.
 - **Delivery is live-only.** Messages sent while both people are offline are
   stored and appear when the conversation is opened next.

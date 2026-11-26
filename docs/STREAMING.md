@@ -11,6 +11,19 @@ spectator only sees a picture when frames are actually arriving.
 - **Format:** one video-only peer connection per viewer (host → viewer mesh),
   capped at four viewers per room.
 
+## Starting from the Games library
+
+The Games view is the entry point to this pipeline. A saved game shows whether a
+window with its executable name is running (the same window list remote control
+uses), and **Start room** creates or opens the game's owned room and opens the
+stream setup. **Launch** runs the executable path the user saved, only when the
+user presses it.
+
+Meldrift still cannot preselect the capture surface: Windows' picker is the
+consent boundary, so the host chooses the game window there. The library reports
+the matching window title to make that choice unambiguous, but it never captures
+anything before the picker returns.
+
 ## Capture architecture
 
 Capture uses **`navigator.mediaDevices.getDisplayMedia` inside WebView2**. In the
