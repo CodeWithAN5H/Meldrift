@@ -32,6 +32,13 @@ const requireSigning = ['1', 'true'].includes(
   String(process.env.MELDRIFT_REQUIRE_SIGNING ?? '').toLowerCase(),
 );
 
+// A pwsh-based parent shell (GitHub's Windows runners) leaves PSModulePath
+// pointing at PowerShell 7's modules, so Windows PowerShell 5.1 cannot autoload
+// its own Microsoft.PowerShell.Security module and Get-AuthenticodeSignature
+// fails. Dropping the variable lets the child rebuild its default module path.
+const powershellEnv = { ...process.env };
+delete powershellEnv.PSModulePath;
+
 function signatureState(file) {
   const output = execFileSync(
     'powershell.exe',
@@ -45,7 +52,7 @@ function signatureState(file) {
       '-Path',
       file,
     ],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: powershellEnv },
   ).trim();
   return JSON.parse(output);
 }

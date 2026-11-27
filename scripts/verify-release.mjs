@@ -65,6 +65,13 @@ check(new RegExp(`^${digest}  Meldrift-Setup\\.exe$`, 'm').test(sums), 'SHA256SU
 check(notes.includes(version), 'release notes do not name the release version');
 check(notes.includes(digest), 'release notes do not include the installer checksum');
 
+// A pwsh-based parent shell (GitHub's Windows runners) leaves PSModulePath
+// pointing at PowerShell 7's modules, so Windows PowerShell 5.1 cannot autoload
+// Microsoft.PowerShell.Security. Dropping the variable lets the child rebuild
+// its default module path and keeps signature/version checks working in CI.
+const powershellEnv = { ...process.env };
+delete powershellEnv.PSModulePath;
+
 function runPowerShell(script, path) {
   const output = execFileSync(
     'powershell.exe',
@@ -78,7 +85,7 @@ function runPowerShell(script, path) {
       '-Path',
       path,
     ],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: powershellEnv },
   ).trim();
   return JSON.parse(output);
 }
